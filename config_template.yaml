@@ -1,0 +1,118 @@
+# ==========================================================
+#         st_book 项目配置文件 (v2.0 - 深度分析优化版)
+# ==========================================================
+# @description: 此版本优化了核心提取Prompt，旨在为后续的世界书生成提供更丰富、
+#              更结构化、更具关联性的高质量原始数据。
+
+# --- API 与模型统一配置 ---
+api:
+  # 请填入您的API密钥和基础URL
+  api_key: "YOUR_API_KEY_HERE"  # 请替换为您的实际API密钥
+  api_base: "https://api.openai.com/v1"  # 请替换为您的API基础URL
+
+models:
+  # 主要模型配置
+  extraction_model: gemini-2.5-flash # 用于快速、批量的信息提取
+  generation_model: gemini-2.5-pro # 用于最终的、需要深度创作的世界书章节生成
+
+  # 模型参数配置
+  extraction_temperature: 0.3 # 角色/世界书信息提取时的温度
+  generation_temperature: 0.2 # 最终内容生成时的温度
+  worldbook_temperature: 0.2 # 世界书提取专用温度
+
+  # 统一的token和超时配置
+  max_tokens: 60000 # 最大输出token数
+  timeout: 300 # API调用超时时间（秒）
+
+# --- 文件路径配置 ---
+# 用户输入配置
+input:
+  source_file: a.txt # 小说源文件路径（可配置）
+  encoding: utf-8 # 文件编码
+
+# 输出目录配置
+output:
+  chunk_dir: chunks # 文本分块输出目录
+  character_responses_dir: character_responses # 角色提取原始响应目录
+  character_responses_raw_dir: character_responses_raw # 角色提取原始响应备份目录
+  character_responses_bad_dir: character_responses_bad # 角色提取失败响应目录
+  roles_json_dir: roles_json # 角色合并后JSON目录
+  cards_dir: cards # 角色卡输出目录
+  wb_responses_dir: wb_responses # 世界书提取响应目录
+  wb_raw_responses_dir: wb_raw_responses # 世界书提取原始响应目录
+  wb_bad_chunks_dir: wb_bad_chunks # 世界书提取失败响应目录
+  worldbook_dir: worldbook # 世界书最终输出目录
+
+# --- 文本处理配置 ---
+text_processing:
+  max_chunk_chars: 30000 # 每个文本块的最大字符数
+  buffer_chars: 200 # 文本块之间的缓冲字符数
+  split_method: size # 分割方法：size（按大小）或chapter（按章节）
+  
+  # 章节识别模式（当split_method为chapter时使用）
+  chapter_patterns:
+    - "第[一二三四五六七八九十百千万\\d]+章"
+    - "第[一二三四五六七八九十百千万\\d]+节"
+    - "第[一二三四五六七八九十百千万\\d]+回"
+
+# --- 性能配置 ---
+performance:
+  max_concurrent: 1 # 最大并发请求数
+  retry_limit: 5 # 重试次数限制
+  retry_delay: 10 # 重试延迟（秒）
+  rate_limit_delay: 5 # 速率限制延迟（秒）
+
+# --- 缓存配置 ---
+cache:
+  enable_cache: true # 是否启用缓存
+  cache_dir: cache # 缓存目录
+  cache_expiry: 86400 # 缓存过期时间（秒）
+
+# --- 相似度阈值配置 ---
+similarity:
+  name_threshold: 0.85 # 角色名称相似度阈值
+  content_threshold: 0.8 # 内容相似度阈值
+  name_boost_threshold: 0.9 # 名称提升阈值
+
+# --- 验证参数配置 ---
+validation:
+  min_character_name_length: 2 # 角色名称最小长度
+  min_content_length: 20 # 内容最小长度
+  max_entries: 2000 # 最大条目数
+  max_features_per_character: 5 # 每个角色最大特征数
+  max_dialogues_per_character: 3 # 每个角色最大对话数
+
+# --- 角色筛选配置 ---
+character_filter:
+  keep_count: 50 # 保留的角色数量（按文件大小排序）
+  backup_filtered: true # 是否备份被筛选掉的角色文件
+
+# --- 错误处理配置 ---
+error_handling:
+  continue_on_error: true # 遇到错误时是否继续处理
+  log_errors: true # 是否记录错误日志
+  max_error_count: 10 # 最大错误数量
+
+# --- 角色卡生成配置 ---
+character_card:
+  spec_version: "2.0" # 角色卡规范版本
+  creator: "st_book_enhanced" # 创建者标识
+  character_version: "1.0" # 角色版本
+  max_tags: 5 # 最大标签数量
+
+# --- 世界书生成配置 ---
+worldbook:
+  name: "AI生成世界书" # 世界书名称
+  description: "基于AI智能分析生成的高质量世界书" # 世界书描述
+  author: "st_book AI" # 作者
+  version: "1.0" # 版本
+
+# ==========================================================
+#                    配置说明
+# ==========================================================
+# 1. API配置：请确保填入正确的API密钥和基础URL
+# 2. 模型配置：根据您的需求调整模型和参数
+# 3. 路径配置：可根据项目结构调整输出目录
+# 4. 性能配置：根据您的硬件和网络情况调整并发数
+# 5. 相似度配置：影响角色合并的准确性，建议谨慎调整
+# ==========================================================
