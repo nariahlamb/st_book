@@ -1,1 +1,127 @@
-# AI驱动的小说角色卡与世界书生成器\n\n本项目是一个基于大语言模型（LLM）的自动化工具，旨在从任何中文小说文本中，智能提取角色信息和世界观设定，并自动生成符合 SillyTavern 格式的高质量角色卡和结构化的世界书。\n\n## 项目特点\n\n- **高度自动化**: 提供一键式命令，从文本分割到最终成品生成，全程无需人工干预。\n- **两阶段处理**: 采用"先提取，后升华"的智能工作流。第一阶段使用高性价比模型快速、批量提取原始信息；第二阶段调用高性能Pro模型对信息进行总结、润色和创作，确保最终产出的高质量。\n- **高度可定制**: 所有AI的行为（如提取规则、创作风格）都通过 `config.yaml` 中的提示词（Prompt）进行定义，方便用户根据不同的小说类型（奇幻、科幻、武侠等）进行调整。\n- **模块化设计**: 代码结构清晰，功能分离，易于理解、维护和扩展。\n\n## 目录结构\n\n```\nst_book/\n├───character_extractor_llm.py  # 角色信息提取器\n├───character_merger.py         # 角色信息合并器\n├───character_workflow.py       # 主工作流管理器 (你的主要入口)\n├───config_template.yaml        # 配置文件模板\n├───create_card.py              # AI增强的角色卡生成器\n├───project_config.py           # 项目配置加载器\n├───README.md                   # 本文档\n├───text_splitter.py            # 文本分割器\n├───worldbook_extractor.py      # 世界书条目提取器\n├───worldbook_generator.py      # AI增强的世界书生成器\n├───cards/                      # 【输出】最终生成的SillyTavern角色卡\n├───chunks/                     # (中间) 小说文本分块\n├───character_responses/        # (中间) 提取的原始角色信息\n├───roles_json/                 # (中间) 合并后的原始角色档案\n├───wb_responses/               # (中间) 提取的原始世界书条目\n└───worldbook/                  # 【输出】最终生成的结构化世界书\n```\n\n## 快速开始\n\n### 1. 环境准备\n\n```bash\n# 克隆项目\ngit clone https://github.com/nariahlamb/st_book.git\ncd st_book\n\n# 安装依赖\npip install -r requirements.txt\n```\n\n### 2. 配置设置\n\n```bash\n# 复制配置模板\ncp config_template.yaml config.yaml\n\n# 编辑配置文件，填入您的API信息\n# 编辑 config.yaml 中的以下部分：\n```\n\n```yaml\napi:\n  api_key: \"YOUR_API_KEY_HERE\"  # 替换为您的API密钥\n  api_base: \"https://api.openai.com/v1\"  # 替换为您的API基础URL\n```\n\n### 3. 准备小说文件\n\n将您的小说文本文件命名为 `a.txt` 并放在项目根目录。\n\n### 4. 一键生成\n\n#### 角色卡生成：\n```bash\npython character_workflow.py auto\n```\n\n#### 世界书生成：\n```bash\npython character_workflow.py wb-auto\n```\n\n## 核心模块说明\n\n- **`character_workflow.py`**: **主控制脚本**。所有操作都应通过此脚本执行。它负责调度其他模块完成指定任务。\n- **`config.yaml`**: **项目的大脑**。你可以在这里配置API密钥、选择不同性能的模型，以及通过修改参数来指导AI的行为。\n\n### 角色卡生成流程\n\n1. **`text_splitter.py`**: 将小说文本分割成适合处理的小文本块，存入 `chunks/`。\n2. **`character_extractor_llm.py`**: (AI-Step 1) 调用基础模型，从每个文本块中提取零散的角色信息，存入 `character_responses/`。\n3. **`character_merger.py`**: 将关于同一角色的零散信息合并成一个"原始档案"，存入 `roles_json/`。\n4. **`character_filter.py`**: 筛选角色，保留最重要的角色。\n5. **`create_card.py`**: (AI-Step 2) **核心步骤**。调用Pro模型，读取"原始档案"，进行深度分析、润色和创作，生成最终的高质量角色卡，存入 `cards/`。\n\n### 世界书生成流程\n\n1. **`worldbook_extractor.py`**: (AI-Step 1) 调用基础模型，从文本块中提取所有世界观设定条目，并自动分类（如地点、组织、物品等），存入 `wb_responses/`。\n2. **`worldbook_generator.py`**: (AI-Step 2) **核心步骤**。按类别分组，调用Pro模型对每个类别下的所有条目进行总结、提炼和创作，最终生成结构化的世界书，存入 `worldbook/`。\n\n## 详细使用说明\n\n### 分步执行（高级用户）\n\n如果你希望更精细地控制流程，可以分步执行：\n\n#### 角色卡制作：\n```bash\npython character_workflow.py split      # 分割文本\npython character_workflow.py extract    # 提取角色\npython character_workflow.py merge      # 合并角色\npython character_workflow.py filter     # 筛选角色\npython character_workflow.py create     # 生成角色卡\n```\n\n#### 世界书制作：\n```bash\npython character_workflow.py wb-extract    # 提取世界书条目\npython character_workflow.py wb-generate   # 生成结构化世界书\n```\n\n### 查看状态\n```bash\npython character_workflow.py status     # 查看当前进度\npython character_workflow.py help       # 查看帮助信息\n```\n\n## 配置说明\n\n### 核心配置项\n\n- **API配置**: `api.api_key` 和 `api.api_base`\n- **模型选择**: `models.extraction_model` (提取用) 和 `models.generation_model` (生成用)\n- **温度参数**: 控制AI创作的随机性\n- **角色筛选**: `character_filter.keep_count` 控制保留的角色数量\n\n### 输出目录\n\n- `cards/` - 最终的角色卡文件\n- `worldbook/` - 最终的世界书文件\n- `roles_json/` - 中间处理的角色数据\n- `chunks/` - 分割的文本块\n\n## 故障排除\n\n1. **API调用失败**: 检查API密钥和网络连接\n2. **角色提取为空**: 检查小说文本格式和编码\n3. **内存不足**: 调整 `text_processing.max_chunk_chars` 参数\n4. **生成速度慢**: 调整 `performance.max_concurrent` 参数\n\n## 贡献\n\n欢迎提交Issue和Pull Request来改进项目！\n\n## 许可证\n\n本项目采用MIT许可证。"
+✨ AI驱动的小说角色卡与世界书生成器
+
+🔍 **项目简介**
+一个基于大语言模型（LLM）的自动化工具，智能提取中文小说文本中的角色信息和世界观设定，自动生成符合SillyTavern格式的高质量角色卡和结构化世界书。
+
+🌟 **项目特点**
+🔹 **高度自动化**: 一键式命令，全程无需人工干预
+🔹 **两阶段处理**: "先提取，后升华"的智能工作流，保证最终产出质量
+🔹 **高度可定制**: 通过config.yaml灵活配置AI行为
+🔹 **模块化设计**: 代码结构清晰，易于维护和扩展
+
+📁 **目录结构**
+```
+st_book/
+├───character_extractor_llm.py  # 角色信息提取器
+├───character_merger.py         # 角色信息合并器
+├───character_workflow.py       # 主工作流管理器 (你的主要入口)
+├───config_template.yaml        # 配置文件模板
+├───create_card.py              # AI增强的角色卡生成器
+├───project_config.py           # 项目配置加载器
+├───README.md                   # 本文档
+├───text_splitter.py            # 文本分割器
+├───worldbook_extractor.py      # 世界书条目提取器
+├───worldbook_generator.py      # AI增强的世界书生成器
+├───cards/                      # 【输出】最终生成的SillyTavern角色卡
+├───chunks/                     # (中间) 小说文本分块
+├───character_responses/        # (中间) 提取的原始角色信息
+├───roles_json/                # (中间) 合并后的原始角色档案
+├───wb_responses/              # (中间) 提取的原始世界书条目
+└───worldbook/                 # 【输出】最终生成的结构化世界书
+```
+
+🚀 **快速开始**
+
+1️⃣ **环境准备**
+```bash
+git clone https://github.com/nariahlamb/st_book.git
+cd st_book
+pip install -r requirements.txt
+```
+
+2️⃣ **配置设置**
+```bash
+cp config_template.yaml config.yaml
+```
+
+🔧 **配置示例**
+```yaml
+api:
+  api_key: "YOUR_API_KEY_HERE"
+  api_base: "https://api.openai.com/v1"
+```
+
+3️⃣ **执行命令**
+
+🔹 **角色卡生成**:
+```bash
+python character_workflow.py auto
+```
+
+🔹 **世界书生成**:
+```bash
+python character_workflow.py wb-auto
+```
+
+📚 **核心模块说明**
+
+🔹 **主要组件**:
+- character_workflow.py: 主控制脚本
+- config.yaml: 项目配置中心
+
+🔹 **角色卡生成流程**:
+1. text_splitter.py: 文本分割
+2. character_extractor_llm.py: AI提取角色信息
+3. character_merger.py: 信息合并
+4. character_filter.py: 角色筛选
+5. create_card.py: 高质量角色卡生成
+
+🔹 **世界书生成流程**:
+1. worldbook_extractor.py: 提取世界观设定
+2. worldbook_generator.py: 生成结构化世界书
+
+🛠️ **高级使用说明**
+
+🔹 **分步执行命令**:
+```bash
+# 角色卡制作
+python character_workflow.py split      # 分割文本
+python character_workflow.py extract    # 提取角色
+python character_workflow.py merge      # 合并角色
+python character_workflow.py filter     # 筛选角色
+python character_workflow.py create     # 生成角色卡
+
+# 世界书制作
+python character_workflow.py wb-extract    # 提取世界书条目
+python character_workflow.py wb-generate   # 生成结构化世界书
+
+# 工具命令
+python character_workflow.py status     # 查看当前进度
+python character_workflow.py help       # 查看帮助信息
+```
+
+⚙️ **配置说明**
+
+🔹 **核心配置项**:
+- API配置: api.api_key 和 api.api_base
+- 模型选择: models.extraction_model 和 models.generation_model
+- 温度参数: AI创作随机性控制
+- 角色筛选: character_filter.keep_count
+
+🔹 **输出目录**:
+- cards/ - 最终角色卡文件
+- worldbook/ - 最终世界书文件
+- roles_json/ - 中间角色数据
+- chunks/ - 分割文本块
+
+❗ **故障排除**
+1. API调用失败: 检查API密钥和网络连接
+2. 角色提取为空: 检查小说文本格式和编码
+3. 内存不足: 调整text_processing.max_chunk_chars参数
+4. 生成速度慢: 调整performance.max_concurrent参数
+
+🤝 **贡献**
+欢迎提交Issue和Pull Request来改进项目！
+
+📄 **许可证**
+本项目采用MIT许可证。
