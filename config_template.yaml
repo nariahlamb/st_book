@@ -27,46 +27,453 @@ input:
 # 输出目录配置
 output:
   chunk_dir: chunks # 文本分块输出目录
-  character_responses_dir: character_responses # 角色提取原始响应目录
-  character_responses_raw_dir: character_responses_raw # 角色提取原始响应备份目录
-  character_responses_bad_dir: character_responses_bad # 角色提取失败响应目录
-  roles_json_dir: roles_json # 角色合并后JSON目录
-  cards_dir: cards # 角色卡输出目录
-  wb_responses_dir: wb_responses # 世界书提取响应目录
-  wb_raw_responses_dir: wb_raw_responses # 世界书提取原始响应目录
-  wb_bad_chunks_dir: wb_bad_chunks # 世界书提取失败响应目录
-  worldbook_dir: worldbook # 世界书最终输出目录
+  mapping_file: chunks/mapping.json # 章节映射文件
+  character_responses_dir: character_responses # 角色提取原始响应
+  character_responses_raw_dir: character_responses_raw # 角色提取原始文本
+  character_responses_bad_dir: character_responses_bad # 失败的角色提取
+  wb_responses_dir: wb_responses # 世界书提取响应
+  wb_raw_responses_dir: wb_raw_responses # 世界书原始响应
+  wb_bad_chunks_dir: wb_bad_chunks # 失败的世界书块
+  roles_json_dir: roles_json # 合并后的角色档案
+  character_stats_file: character_stats.json # 角色统计文件
+  cards_dir: cards # 最终角色卡输出
+  worldbook_dir: worldbook # 最终世界书输出
 
-# --- 文本处理配置 ---
+# --- 文本分块与处理配置 ---
 text_processing:
-  max_chunk_chars: 30000 # 每个文本块的最大字符数
-  buffer_chars: 200 # 文本块之间的缓冲字符数
-  split_method: size # 分割方法：size（按大小）或chapter（按章节）
-  
-  # 章节识别模式（当split_method为chapter时使用）
+  max_chunk_chars: 60000 # 每个文本块的最大字符数
+  buffer_chars: 200 # 文本块之间的重叠字符数
   chapter_patterns:
-    - "第[一二三四五六七八九十百千万\\d]+章"
-    - "第[一二三四五六七八九十百千万\\d]+节"
-    - "第[一二三四五六七八九十百千万\\d]+回"
+  # 章节识别模式
+  - 第[一二三四五六七八九十百千万\d]+章
+  - 第[一二三四五六七八九十百千万\d]+节
+  - 第[一二三四五六七八九十百千万\d]+回
+  - 第[一二三四五六七八九十百千万\d]+部分
+  - Chapter \d+
+  - 章节 \d+
 
-# --- 性能配置 ---
+# --- 网络与性能配置 ---
 performance:
   max_concurrent: 1 # 最大并发请求数
   retry_limit: 5 # 重试次数限制
   retry_delay: 10 # 重试延迟（秒）
-  rate_limit_delay: 5 # 速率限制延迟（秒）
+  rate_limit_delay: 5 # API限流延迟（秒）
+  batch_size: 1 # 批处理大小
 
 # --- 缓存配置 ---
 cache:
   enable_cache: true # 是否启用缓存
   cache_dir: cache # 缓存目录
-  cache_expiry: 86400 # 缓存过期时间（秒）
+  cache_expiry_days: 30 # 缓存过期天数
 
-# --- 相似度阈值配置 ---
+# --- 核心Prompt优化 ---
+
+# [V2.0 优化] 角色提取Prompt：增加了动机、关系和别名分析
+character_extraction_prompt: |
+  <role>
+  你是一位资深的角色分析师和心理侧写师。你的任务是从以下小说段落中，精准地提取并结构化所有出现的角色信息。请记住，你的输出将作为构建一个复杂角色关系网络的基础数据。
+  </role>
+
+  <task>
+  请严格按照以下JSON数组格式输出，直接输出JSON内容，不要包含任何Markdown标记或解释性文字。
+
+  对于段落中的每一个角色，提取以下信息：
+  - "name": 角色的主要姓名。
+  - "aliases": (数组) 角色的所有别名、代称、外号或他人对其的特殊称呼（例如“那个高个子”、“队长”）。这对于后续角色识别至关重要。
+  - "features": (字符串) 角色的外貌、衣着或其他显著的物理特征。
+  - "personality": (字符串) 角色的核心性格特质，请使用精准的描述性词语（如“果断但多疑”、“外表冷漠内心柔软”）。
+  - "quote": (字符串) 挑选一句最能体现其性格或说话习惯的代表性对话。
+  - "motivation": (字符串, 可选) 推断该角色在当前场景下的主要动机或目标是什么？
+  - "relationships": (对象数组, 可选) 描述该角色与其他角色的已知关系。每个对象包含 "target_name" 和 "relation_type" (例如：{"target_name": "李雷", "relation_type": "对手"})。
+  </task>
+
+  <example_format>
+  [
+    {
+      "name": "主角A",
+      "aliases": ["队长", "阿A"],
+      "features": "身材高大，右眼角有一道浅浅的疤痕，常穿一件磨损的皮夹克。",
+      "personality": "沉着冷静，不善言辞，但在关键时刻极具决断力。",
+      "quote": "“废话少说，按计划行动。”",
+      "motivation": "找到失踪的妹妹。",
+      "relationships": [
+        {
+          "target_name": "配角B",
+          "relation_type": "不信任的盟友"
+        }
+      ]
+    }
+  ]
+  </example_format>
+
+# [V2.0 优化] 世界观提取Prompt：增加了关系、功能和动态影响的分析维度
+worldbook_extraction_prompt: |
+  <role>
+  你是一位知识考古学家和世界观分类学者。你的任务是从以下小说段落中，挖掘出所有构成世界观的专有名词和核心概念。你的输出将用于构建一个有机关联的世界设定集。
+  </role>
+
+  <task>
+  请严格按照以下JSON数组格式输出，直接输出JSON内容，不要包含任何Markdown标记或解释性文字。
+
+  对于段落中的每一个设定，提取以下信息：
+  - "name": (字符串) 专有名词的名称。
+  - "type": (枚举字符串) 从 ["人物", "地点", "物品", "技能", "组织", "历史事件", "法则/概念", "种族/生物"] 中选择一个最合适的类型。
+  - "description": (字符串) 详细描述该设定的背景、外观、功能或定义。
+  - "importance": (整数, 1-10) 评估该设定在当前文段乃至整个故事中的重要程度，10为最重要。
+  - "keywords": (字符串数组) 列出可能触发此条目的相关词汇或同义词。
+  - "relationships": (字符串, 可选) 简要描述该条目与其他设定的已知关联（例如：“是「A组织」的圣物”，“在「B事件」中被摧毁”）。这是构建世界体系的关键。
+  - "impact": (字符串, 可选) 推断该设定对角色或世界产生了什么具体的影响？（例如：“让主角获得了「飞行」能力”，“导致了王国的覆灭”）。
+  </task>
+
+  <example_format>
+  [
+    {
+      "name": "低语森林",
+      "type": "地点",
+      "description": "一片笼罩在恒久薄雾中的古老森林，其中的树木会发出类似梦呓的低语。外人进入后极易迷失方向。",
+      "importance": 8,
+      "keywords": ["森林", "迷雾之地", "低语之地"],
+      "relationships": "是「月影德鲁伊」教派的隐居地。",
+      "impact": "为主角提供了一个躲避追捕的天然屏障，同时也是获取稀有草药‘月光苔’的唯一途径。"
+    }
+  ]
+  </example_format>
+
+# --- 名称规范化与语义匹配 ---
+name_normalization:
+  enable: true
+  merge_similar_names: true
+  name_mappings: {} # 自定义名称映射
+
+# --- SillyTavern 世界书生成配置 ---
+sillytavern_worldbook:
+  name: 自动生成世界书
+  description: 由 nana 定制
+  scan_depth: 4
+  token_budget: 400
+  recursive_scanning: true
+  case_sensitive: false
+  match_whole_words: false
+  default_entry:
+    order: 100
+    position: 0
+    probability: 100
+    depth: 4
+    enabled: true
+
+# --- SillyTavern 世界书智能参数自动化配置 ---
+worldbook_automation:
+  # 启用智能参数自动化赋值
+  enable: true
+
+  # 基于条目类型的order权重映射（数值越小优先级越高）
+  order_weights:
+    主角: 10
+    核心伙伴: 20
+    主要反派: 20
+    重要配角: 30
+    核心组织: 40
+    修炼体系: 50
+    核心概念: 50
+    地理区域: 60
+    历史事件: 70
+    重要物品: 80
+    普通角色: 90
+    默认: 100
+    普通物品: 110
+    背景设定: 120
+
+  # 基于条目类型的constant字段配置（是否常驻内存）
+  constant_types:
+  - 主角
+  - 核心伙伴
+  - 修炼体系
+  - 核心概念
+  - 核心组织
+  # selective字段配置（选择性注入阈值）
+  selective_threshold: 800 # 内容长度超过此值启用选择性注入
+  selective_force_types:
+  # 强制启用选择性注入的类型
+  - 历史事件
+  - 地理区域
+  - 背景设定
+  # addMemo字段配置（自动标记指令性内容）
+  addmemo_keywords:
+  - "注意"
+  - "重要"
+  - "禁止"
+  - "必须"
+  - "规则"
+  - "限制"
+  - "警告"
+  # depth字段配置（扫描深度）
+  depth_mapping:
+    主角: 2
+    核心伙伴: 2
+    主要反派: 3
+    核心组织: 3
+    修炼体系: 4
+    默认: 4
+    背景设定: 6
+
+  # probability字段配置（触发概率）
+  probability_mapping:
+    主角: 100
+    核心伙伴: 100
+    主要反派: 95
+    重要配角: 90
+    核心组织: 85
+    修炼体系: 90
+    核心概念: 85
+    默认: 80
+    背景设定: 70
+
+  # 基于内容长度的动态调整
+  content_length_adjustments:
+    short_content_threshold: 200 # 短内容阈值
+    long_content_threshold: 1000 # 长内容阈值
+    short_content_probability_boost: 10 # 短内容概率提升
+    long_content_depth_increase: 1 # 长内容深度增加
+
+  # 关键词密度分析配置
+  keyword_density_analysis:
+    enable: true
+    high_density_threshold: 0.05 # 关键词密度超过5%视为高密度
+    high_density_order_boost: -10 # 高密度条目优先级提升
+
+  # 中文网文特殊处理
+  chinese_webnovel_optimization:
+    enable: true
+    cultivation_keywords:
+    # 修炼体系关键词
+    - "境界"
+    - "修为"
+    - "功法"
+    - "丹药"
+    - "灵气"
+    - "元婴"
+    - "金丹"
+    - "筑基"
+    power_system_boost: -20 # 修炼体系优先级大幅提升
+    relationship_keywords:
+    # 关系描述关键词
+    - "师父"
+    - "弟子"
+    - "师兄"
+    - "师姐"
+    - "宗门"
+    - "门派"
+
+# --- 事件驱动架构配置 ---
+event_driven_architecture:
+  # 启用事件驱动模式（false则使用传统实体提取模式）
+  enable: true
+
+  # 事件提取配置
+  event_extraction:
+    # 事件重要性评分标准
+    significance_criteria:
+      plot_advancement: "推动主线剧情发展"
+      character_development: "角色成长或转变"
+      world_building: "揭示世界观设定"
+      relationship_change: "改变角色关系"
+      power_system: "涉及修炼体系或能力"
+      conflict_resolution: "解决重要冲突"
+
+    # 事件分类标准
+    event_types:
+    - "战斗事件"
+    - "修炼突破"
+    - "情感转折"
+    - "阴谋揭露"
+    - "势力变动"
+    - "宝物获得"
+    - "地点探索"
+    - "关系建立"
+    - "危机解决"
+    - "背景揭示"
+
+  # 时间线构建配置
+  timeline_construction:
+    # 时间线分层策略
+    timeline_layers:
+      overview: "故事总览时间线"
+      character: "角色发展时间线"
+      faction: "势力变动时间线"
+      world: "世界观演进时间线"
+
+    # 事件关联算法配置
+    event_correlation:
+      participant_weight: 0.4 # 参与者相同的权重
+      location_weight: 0.2 # 地点相同的权重
+      temporal_weight: 0.3 # 时间邻近的权重
+      causal_weight: 0.5 # 因果关系的权重
+
+    # 实体时间线配置
+    entity_timeline:
+      min_appearances: 3 # 最少出现次数才生成时间线
+      significance_threshold: 5 # 重要性阈值
+      max_timeline_entries: 20 # 每个实体最多时间线条目数
+
+  # 三层世界书结构配置
+  layered_worldbook:
+    # 总览层配置（蓝灯条目）
+    overview_layer:
+      order_range: [ 1, 20 ]
+      constant: true
+      depth: 2
+      probability: 100
+
+    # 实体层配置（高优先级）
+    entity_layer:
+      order_range: [ 21, 60 ]
+      constant: true
+      depth: 3
+      probability: 95
+
+    # 事件层配置（绿灯）
+    event_layer:
+      order_range: [ 61, 120 ]
+      constant: false
+      depth: 4
+      probability: 80
+
+  # 向后兼容配置
+  backward_compatibility:
+    fallback_to_entity_mode: true # 事件提取失败时回退到实体模式
+    preserve_entity_extraction: true # 保留原有实体提取功能
+    hybrid_mode: false # 混合模式：同时使用事件和实体提取
+
+# --- 世界规则层配置 ---
+world_rules:
+  # 启用世界规则提取（三层架构的核心）
+  enable_extraction: true
+
+  # 规则提取配置
+  rule_extraction:
+    # 规则分类标准
+    rule_types:
+    - "物理法则" # 重力、时间、空间等基础物理规律
+    - "魔法体系" # 魔法原理、法术分类、魔力来源
+    - "修炼体系" # 境界等级、修炼方法、突破条件
+    - "神明设定" # 神祇体系、神力规则、信仰机制
+    - "种族设定" # 各种族特征、能力、文化背景
+    - "社会规则" # 政治制度、法律体系、社会习俗
+    - "地理背景" # 世界地理、气候环境、地域特色
+    - "历史背景" # 重大历史事件、时代变迁、文明发展
+    - "经济体系" # 货币制度、贸易规则、资源分配
+    - "技术水平" # 科技发展、工艺水平、创新能力
+    # 规则重要性评分标准
+    importance_criteria:
+      fundamental_law: "影响整个世界运行的基础法则"
+      power_system: "角色能力和成长的核心机制"
+      social_order: "社会运行和角色互动的基础"
+      world_background: "世界观的重要背景设定"
+      cultural_element: "丰富世界文化的特色元素"
+
+    # 规则提取Prompt模板
+    extraction_prompt: |
+      你是一个世界观架构师，专门从小说文本中提取构成世界基础的规则和设定。
+
+      **提取目标**：识别文本中体现的世界运行规则，而非具体事件。
+
+      **规则分类**：
+      - 物理法则：重力、时间、空间等基础物理规律
+      - 魔法体系：魔法原理、法术分类、魔力来源、施法规则
+      - 修炼体系：境界等级、修炼方法、突破条件、能力获得
+      - 神明设定：神祇体系、神力规则、信仰机制、神迹表现
+      - 种族设定：各种族特征、天赋能力、文化背景、生理特点
+      - 社会规则：政治制度、法律体系、社会习俗、等级秩序
+      - 地理背景：世界地理、气候环境、地域特色、空间结构
+      - 历史背景：重大历史、时代变迁、文明发展、传说起源
+      - 经济体系：货币制度、贸易规则、资源分配、价值体系
+      - 技术水平：科技发展、工艺水平、创新能力、技术限制
+
+      **输出格式**：
+      [
+        {
+          "rule_summary": "规则的简洁描述（20字以内）",
+          "rule_type": "规则分类（从上述分类中选择）",
+          "description": "规则的详细说明和运行机制",
+          "importance": 8,
+          "evidence": "文本中体现此规则的具体证据",
+          "implications": "此规则对世界和角色的影响",
+          "scope": "规则的适用范围（全世界/特定地区/特定群体）"
+        }
+      ]
+
+  # 三层世界书结构配置
+  layered_worldbook:
+    # 规则层配置（世界的"宪法"）
+    rules_layer:
+      order_range: [ 0, 20 ]
+      constant: true
+      depth: 2
+      probability: 100
+      comment_prefix: "【世界规则】"
+
+    # 时间线总览层配置
+    timeline_layer:
+      order: 21
+      constant: true
+      depth: 3
+      probability: 100
+      comment: "【故事总览】时间线"
+
+    # 核心实体层配置
+    entity_layer:
+      order_range: [ 30, 50 ]
+      constant: true # 可通过配置调整
+      depth: 3
+      probability: 95
+      comment_prefix: "【核心实体】"
+
+    # 具体事件层配置
+    event_layer:
+      order_base: 110 # order = order_base - significance * 10
+      constant: false
+      depth: 4
+      probability: 80
+      comment_prefix: "【事件】"
+
+  # 规则整合配置
+  rule_integration:
+    # 同类规则合并阈值
+    similarity_threshold: 0.7
+    # 规则重要性最低阈值
+    min_importance: 5
+    # 每个规则类型最多保留的条目数
+    max_rules_per_type: 5
+
+# --- 角色卡生成配置 ---
+character_card:
+  generate_mes_example: true
+  generate_alternate_greetings: true
+  generate_system_prompt: true
+  extract_tags: true
+  alternate_greetings_count: 3
+  max_tags: 10 # 适当增加标签数量，以捕捉更丰富的角色特征
+  creator: nala
+  character_version: '1.0'
+
+# --- 日志与调试配置 ---
+logging:
+  log_file: logs/st_book.log # 日志文件路径
+  log_level: INFO # 日志级别
+  log_format: '[{asctime}] {levelname}: {message}' # 日志格式
+  style: '{' # 日志格式样式
+  verbose_logging: true # 详细日志输出
+
+debug:
+  test_mode: false # 测试模式
+  max_test_chunks: 5 # 测试模式下最大处理块数
+
+# --- 相似度阈值统一配置 ---
 similarity:
-  name_threshold: 0.85 # 角色名称相似度阈值
-  content_threshold: 0.8 # 内容相似度阈值
-  name_boost_threshold: 0.9 # 名称提升阈值
+  name_threshold: 0.95 # 角色名称相似度阈值（提高到0.95避免错误合并）
+  content_threshold: 0.85 # 内容相似度阈值
+  name_boost_threshold: 0.95 # 名称包含关系时的加权阈值
+  merge_threshold: 0.9 # 角色合并决策阈值（提高到0.9确保只合并真正相同的角色）
 
 # --- 验证参数配置 ---
 validation:
@@ -78,35 +485,36 @@ validation:
 
 # --- 角色筛选配置 ---
 character_filter:
-  keep_count: 50 # 保留的角色数量（按文件大小排序）
+  keep_count: 30 # 保留的角色数量（按文件大小排序）
   backup_filtered: true # 是否备份被筛选掉的角色文件
 
 # --- 错误处理配置 ---
 error_handling:
   continue_on_error: true # 遇到错误时是否继续处理
-  log_errors: true # 是否记录错误日志
-  max_error_count: 10 # 最大错误数量
+  save_error_details: true # 是否保存错误详情
+  max_consecutive_errors: 5 # 最大连续错误数
 
-# --- 角色卡生成配置 ---
-character_card:
-  spec_version: "2.0" # 角色卡规范版本
-  creator: "st_book_enhanced" # 创建者标识
-  character_version: "1.0" # 角色版本
-  max_tags: 5 # 最大标签数量
+# --- 输出格式配置 ---
+output_format:
+  ensure_ascii: false
+  indent: 2
+  sort_keys: false
 
-# --- 世界书生成配置 ---
-worldbook:
-  name: "AI生成世界书" # 世界书名称
-  description: "基于AI智能分析生成的高质量世界书" # 世界书描述
-  author: "st_book AI" # 作者
-  version: "1.0" # 版本
+# --- GUI应用配置 ---
+gui:
+  window_geometry: "1000x800" # 主窗口大小
+  log_height: 15 # 日志区域高度
+  config_file_name: "config.yaml" # 配置文件名称
+  workflow_script_name: "character_workflow.py" # 工作流脚本名称
 
-# ==========================================================
-#                    配置说明
-# ==========================================================
-# 1. API配置：请确保填入正确的API密钥和基础URL
-# 2. 模型配置：根据您的需求调整模型和参数
-# 3. 路径配置：可根据项目结构调整输出目录
-# 4. 性能配置：根据您的硬件和网络情况调整并发数
-# 5. 相似度配置：影响角色合并的准确性，建议谨慎调整
-# ==========================================================
+# --- 文件转换配置 ---
+conversion:
+  worldbook_input_filename: "worldbook.json" # 世界书输入文件名
+  worldbook_output_filename: "worldbook_st_v2.json" # 世界书输出文件名
+  worldbook_conversion_dir: "worldbook" # 世界书转换目录
+
+# --- 实验性功能 ---
+experimental:
+  enable_batch_processing: true # 启用批处理
+  enable_smart_chunking: true # 启用智能分块
+  enable_character_relationships: true # 启用角色关系分析
