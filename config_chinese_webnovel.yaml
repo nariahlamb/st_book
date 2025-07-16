@@ -1,0 +1,48 @@
+# 中文网文专用配置模板
+api:
+  api_key: "YOUR_API_KEY_HERE"
+  api_base: "https://api.openai.com/v1"
+
+models:
+  # 针对中文网文优化的模型配置
+  extraction_model: gemini-2.5-flash
+  generation_model: gemini-2.5-pro
+  extraction_temperature: 0.2  # 降低温度提高一致性
+  generation_temperature: 0.3
+  max_tokens: 80000  # 增加token限制支持更长生成
+
+# 中文网文特化配置
+chinese_webnovel:
+  novel_type: "xianxia"  # 小说类型：xianxia, fantasy, urban, historical
+  enable_cultivation_system: true  # 启用修炼体系识别
+  enable_faction_analysis: true    # 启用势力分析
+  enable_relationship_graph: true  # 启用关系图生成
+  
+  # 角色识别增强
+  character_recognition:
+    detect_titles: true           # 识别称谓和头衔
+    detect_cultivation_levels: true  # 识别修炼等级
+    merge_similar_names: 0.9     # 相似名字合并阈值
+    
+  # 专有名词词典
+  terminology:
+    cultivation_levels:
+      - ["练气", "筑基", "金丹", "元婴", "化神"]
+    common_titles:
+      - ["师父", "师兄", "师姐", "长老", "宗主"]
+    factions:
+      - ["门派", "宗门", "势力", "家族"]
+
+# 性能优化配置
+performance:
+  max_concurrent: 3
+  chunk_overlap: 500  # 增加重叠以保持语境
+  enable_smart_batching: true
+  memory_optimization: true
+
+# 质量控制
+quality:
+  min_character_details: 100  # 最小角色描述长度
+  require_personality: true   # 必须包含性格描述
+  require_background: true    # 必须包含背景信息
+  max_minor_characters: 30    # 最大次要角色数量
