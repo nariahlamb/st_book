@@ -130,7 +130,7 @@ class CardCreator:
                             "scenario": raw_data.get("scenario", ""), # 场景可以保留原始的
                             "first_mes": refined_data.get("first_mes", ""),
                             "mes_example": "",
-                            "creator_notes": f"由st_book AI增强生成。原始条目数: {raw_data.get('entries', 1)}",
+                            "creator_notes": f"由我的主人nala给你做的。原始条目数: {raw_data.get('entries', 1)}",
                             "system_prompt": "",
                             "post_history_instructions": "",
                             "alternate_greetings": refined_data.get("alternate_greetings", []),

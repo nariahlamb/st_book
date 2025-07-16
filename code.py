@@ -1,24 +1,40 @@
 #!/usr/bin/env python3
 """
 SillyTavern V2 世界书格式转换器
-将生成的世界书转换为SillyTavern V2兼容格式
+================================
+本脚本用于将 "st_book" 项目生成的、以“类别”为章节的深度世界书JSON文件，
+转换为 SillyTavern V2 直接支持的标准格式。
+
+V1.5 - [最终结构修复] 彻底重构输出格式，确保 "entries" 字段是一个以
+       数字为键的对象，而不是数组，以完全匹配 SillyTavern 的UI解析逻辑。
 """
 
 import json
-import uuid
 from pathlib import Path
-from typing import Dict, List, Any
+import re
+from worldbook_parameter_optimizer import WorldbookParameterOptimizer
+
+# --- 配置区 ---
+INPUT_FILENAME = "worldbook.json"
+OUTPUT_FILENAME = "worldbook_st_v2.json"
+WORLDBOOK_DIR = "worldbook"
 
 class WorldbookFormatter:
-    """世界书格式转换器"""
-    
-    def __init__(self, input_dir: str = "worldbook"):
-        self.input_dir = Path(input_dir)
-        self.input_path = self.input_dir / "worldbook.json"
-        self.output_path = self.input_dir / "worldbook_st_v2.json"
-    
+    """将自定义世界书格式转换为SillyTavern V2标准格式"""
+
+    def __init__(self, input_dir: str):
+        self.input_path = Path(input_dir) / INPUT_FILENAME
+        self.output_path = Path(input_dir) / OUTPUT_FILENAME
+        self.parameter_optimizer = WorldbookParameterOptimizer()
+
+    def clean_text_for_json(self, text: str) -> str:
+        """预处理文本，确保其对于JSON是安全的"""
+        if not isinstance(text, str):
+            text = str(text)
+        return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+
     def convert(self):
-        """转换世界书格式"""
+        """执行转换流程"""
         print("="*60)
         print("[CONVERT] SillyTavern V2 世界书格式转换器 v1.5 (最终结构修复版)")
         print("="*60)
@@ -35,75 +51,91 @@ class WorldbookFormatter:
             print(f"[ERROR] 读取或解析JSON文件时发生错误: {e}")
             return
 
-        # 检查数据结构
-        if not isinstance(source_data, dict):
-            print(f"[ERROR] 源文件格式错误: 期望字典，得到 {type(source_data)}")
-            return
-
-        # 提取所有章节的条目
-        source_entries_list = []
-        for chapter_name, chapter_data in source_data.items():
-            if isinstance(chapter_data, dict) and 'entries' in chapter_data:
-                entries = chapter_data['entries']
-                if isinstance(entries, list):
-                    source_entries_list.extend(entries)
-                else:
-                    print(f"[WARNING] 章节 '{chapter_name}' 的条目不是列表格式")
-
-        if not source_entries_list:
-            print("[ERROR] 没有找到有效的条目数据")
-            return
-
-        print(f"[INFO] 找到 {len(source_entries_list)} 个源条目")
-
-        # 转换为SillyTavern V2格式
-        final_entries_object = []
+        source_entries_list = source_data.get("entries", [])
         
+        if not source_entries_list:
+            print("\n" + "!"*60)
+            print("🛑 致命错误: 源文件 'worldbook.json' 中的 'entries' 数组为空！")
+            print("   已中止转换。")
+            print("!"*60)
+            return
+
+        # [V1.5 CRITICAL FIX] SillyTavern 的 "entries" 是一个对象，而不是列表！
+        final_entries_object = {}
+        print("🔄 开始转换条目...")
+        
+        entry_uid_counter = 0
         for entry in source_entries_list:
-            if not isinstance(entry, dict):
+            primary_keys = entry.get("key", [])
+            if not primary_keys or not isinstance(primary_keys, list):
                 continue
-                
-            # 创建SillyTavern V2条目
-            st_entry = {
-                "uid": str(uuid.uuid4()),
-                "key": [entry.get('name', '未知')],
-                "keysecondary": entry.get('aliases', []) if isinstance(entry.get('aliases'), list) else [],
-                "comment": entry.get('category', ''),
-                "content": entry.get('description', ''),
-                "constant": False,
-                "selective": True,
-                "selectiveLogic": 0,
-                "addMemo": False,
-                "order": 100,
-                "position": 0,
-                "disable": False,
-                "excludeRecursion": False,
-                "probability": 100,
-                "useProbability": True
+
+            content = entry.get("content", "")
+            if not content:
+                continue
+            
+            cleaned_content = self.clean_text_for_json(content)
+
+            title_keys = {self.clean_text_for_json(re.sub(r'\(.*?\)', '', k).strip()) for k in re.findall(r'#+\s*(.+)', cleaned_content)}
+            bold_keys = {self.clean_text_for_json(re.sub(r'\(.*?\)', '', k).strip()) for k in re.findall(r'\*\*(.*?)\*\*', cleaned_content)}
+            
+            secondary_keys_set = title_keys.union(bold_keys)
+            for pk in primary_keys:
+                secondary_keys_set.discard(pk)
+            
+            final_primary_keys = sorted([k for k in primary_keys if k])
+            final_secondary_keys = sorted([k for k in secondary_keys_set if k])
+            
+            if not final_primary_keys:
+                continue
+            
+            # [V2.0 智能参数优化] 使用智能参数优化器
+            optimized_params = self.parameter_optimizer.optimize_entry_parameters(
+                entry=entry,
+                entry_type=entry.get('type'),
+                content=cleaned_content
+            )
+
+            # 构建完全符合示例的条目对象，使用优化后的参数
+            new_entry_data = {
+                "key": final_primary_keys,
+                "keysecondary": optimized_params.get('keysecondary', final_secondary_keys),
+                "comment": optimized_params.get('comment', self.clean_text_for_json(entry.get("comment", ""))),
+                "content": cleaned_content,
+                "constant": optimized_params.get('constant', False),
+                "selective": optimized_params.get('selective', True),
+                "addMemo": optimized_params.get('addMemo', False),
+                "order": optimized_params.get('order', 100),
+                "position": optimized_params.get('position', 0),
+                "disable": optimized_params.get('disable', False),
+                "excludeRecursion": optimized_params.get('excludeRecursion', False),
+                "preventRecursion": optimized_params.get('preventRecursion', False),
+                "probability": optimized_params.get('probability', 100),
+                "useProbability": optimized_params.get('useProbability', True),
+                "depth": optimized_params.get('depth', 4),
+                # 添加其他在示例中看到的字段，并提供默认值
+                "uid": entry_uid_counter,
+                "displayIndex": entry_uid_counter,
+                "extensions": {} # 可以暂时留空或填充默认值
             }
             
-            final_entries_object.append(st_entry)
+            # 使用计数器作为对象的键
+            final_entries_object[str(entry_uid_counter)] = new_entry_data
+            entry_uid_counter += 1
+            print(f"  -> 已转换条目: {primary_keys[0]} (UID: {entry_uid_counter-1})")
 
-        # 创建最终的SillyTavern V2世界书结构
-        final_worldbook = {
-            "entries": final_entries_object,
-            "name": "AI生成世界书",
-            "description": "基于AI智能分析生成的高质量世界书",
-            "scanDepth": 100,
-            "tokenBudget": 500,
-            "recursiveScanning": True,
-            "extensions": {
-                "world_info_depth": 4,
-                "world_info_min_activations": 0,
-                "world_info_min_activations_depth_max": 3,
-                "world_info_max_recursion_depth": 5
-            }
+        # [V1.5 CRITICAL FIX] 构建最终的世界书对象
+        st_v2_worldbook = {
+            "name": source_data.get("name", "自动转换的世界书"),
+            "description": source_data.get("description", "由格式转换器自动生成"),
+            "entries": final_entries_object # 这里现在是一个对象
         }
-
-        # 保存转换后的文件
+        
         try:
+            print(f"\n💾 正在保存为最终兼容格式文件: {self.output_path}")
+            json_string = json.dumps(st_v2_worldbook, ensure_ascii=False, indent=4) # indent=4更接近示例格式
             with open(self.output_path, 'w', encoding='utf-8') as f:
-                json.dump(final_worldbook, f, ensure_ascii=False, indent=2)
+                f.write(json_string)
         except Exception as e:
             print(f"[ERROR] 保存文件时发生错误: {e}")
             return
@@ -117,7 +149,7 @@ class WorldbookFormatter:
 
 def main():
     """主函数"""
-    formatter = WorldbookFormatter()
+    formatter = WorldbookFormatter(WORLDBOOK_DIR)
     formatter.convert()
 
 if __name__ == "__main__":

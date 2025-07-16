@@ -76,28 +76,66 @@ class CharacterMerger:
         """计算两个角色实体的综合相似度"""
         name1 = char1_data['name']
         name2 = char2_data['name']
-        
+
+        # 严格检查：如果名字完全不同，直接返回0
+        if self._are_completely_different_characters(name1, name2):
+            return 0.0
+
         norm_name1 = self.normalize_name(name1)
         norm_name2 = self.normalize_name(name2)
 
         name_sim = difflib.SequenceMatcher(None, norm_name1, norm_name2).ratio()
-        
-        if norm_name1 and norm_name2 and (norm_name1 in norm_name2 or norm_name2 in norm_name1):
-            name_boost_threshold = float(self.config.get("similarity.name_boost_threshold", 0.9))
+
+        # 只有在名字非常相似时才进行包含关系检查
+        if norm_name1 and norm_name2 and name_sim > 0.8 and (norm_name1 in norm_name2 or norm_name2 in norm_name1):
+            name_boost_threshold = float(self.config.get("similarity.name_boost_threshold", 0.95))
             name_sim = max(name_sim, name_boost_threshold)
 
         features1 = char1_data['feature_set']
         features2 = char2_data['feature_set']
-        
+
         intersection = len(features1.intersection(features2))
         union = len(features1.union(features2))
         content_sim = intersection / union if union > 0 else 0.0
 
+        # 更严格的判断：名字相似度必须很高才认为是同一角色
         if name_sim >= self.name_similarity_threshold:
             return name_sim
-        
-        combined_sim = (name_sim * 0.8) + (content_sim * 0.2)
+
+        # 如果名字相似度不够高，即使内容相似也不合并
+        if name_sim < 0.7:
+            return 0.0
+
+        combined_sim = (name_sim * 0.9) + (content_sim * 0.1)  # 更重视名字相似度
         return combined_sim
+
+    def _are_completely_different_characters(self, name1: str, name2: str) -> bool:
+        """检查两个名字是否明显属于不同角色"""
+        # 常见的不同角色名字模式
+        different_patterns = [
+            # 明显不同的中文名字（长度差异很大）
+            (len(name1) >= 3 and len(name2) >= 3 and not any(c in name2 for c in name1)),
+            # 一个是中文名，一个是英文名
+            (self._is_chinese_name(name1) and self._is_english_name(name2)),
+            (self._is_english_name(name1) and self._is_chinese_name(name2)),
+            # 明显的角色类型差异（如"主角"vs"配角"）
+            (self._is_role_description(name1) and self._is_role_description(name2) and name1 != name2)
+        ]
+
+        return any(different_patterns)
+
+    def _is_chinese_name(self, name: str) -> bool:
+        """判断是否为中文名字"""
+        return bool(re.search(r'[\u4e00-\u9fff]', name)) and len(name) <= 4
+
+    def _is_english_name(self, name: str) -> bool:
+        """判断是否为英文名字"""
+        return bool(re.search(r'^[a-zA-Z\s]+$', name))
+
+    def _is_role_description(self, name: str) -> bool:
+        """判断是否为角色描述而非具体名字"""
+        role_keywords = ['主角', '配角', '反派', '男主', '女主', '主人公', '男性', '女性']
+        return any(keyword in name for keyword in role_keywords)
 
     def _select_best_character_name(self, all_names: List[str]) -> str:
         """智能选择最佳的角色名称，避免选择关系描述性名称"""

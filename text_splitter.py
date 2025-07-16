@@ -1,224 +1,346 @@
 #!/usr/bin/env python3
 """
-文本分割器 - 将小说文本分割为适合处理的文本块
+文本分割器 - 将完整小说文本分割为文本块
 """
 
-import json
 import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+import json
+from datetime import datetime
 from project_config import get_config
 
 class TextSplitter:
-    """文本分割器 - 支持按大小和按章节分割"""
-    
-    def __init__(self):
+    """文本分割器"""
+
+    def __init__(self, chunk_size: Optional[int] = None, overlap: Optional[int] = None):
         self.config = get_config()
-        
-        # 从配置读取参数
-        self.max_chunk_chars = int(self.config.get("text_processing.max_chunk_chars", 30000))
-        self.buffer_chars = int(self.config.get("text_processing.buffer_chars", 200))
-        self.split_method = self.config.get("text_processing.split_method", "size")
-        
-        # 章节识别模式
-        self.chapter_patterns = self.config.get("text_processing.chapter_patterns", [
-            "第[一二三四五六七八九十百千万\\d]+章",
-            "第[一二三四五六七八九十百千万\\d]+节",
-            "第[一二三四五六七八九十百千万\\d]+回"
-        ])
-        
-        # 输出目录
-        self.output_dir = Path(self.config.get("output.chunk_dir", "chunks"))
+        # 使用新的配置结构
+        default_chunk_size = self.config.get('text_processing.max_chunk_chars', 30000)
+        default_overlap = self.config.get('text_processing.buffer_chars', 200)
+
+        self.chunk_size: int = chunk_size if chunk_size is not None else int(default_chunk_size)
+        self.overlap: int = overlap if overlap is not None else int(default_overlap)
+
+        # 从配置读取输出目录
+        self.output_dir = Path(self.config.get('output.chunk_dir', 'chunks'))
         self.output_dir.mkdir(exist_ok=True)
+
+        # 章节模式
+        self.chapter_patterns = [
+            r'第[一二三四五六七八九十百千万\d]+章',
+            r'第[一二三四五六七八九十百千万\d]+节',
+            r'第[一二三四五六七八九十百千万\d]+回',
+            r'第[一二三四五六七八九十百千万\d]+部分',
+            r'Chapter \d+',
+            r'章节 \d+'
+        ]
     
-    def split_novel(self, input_file: str, method: str = None) -> List[str]:
-        """分割小说文本
-        
-        Args:
-            input_file: 输入文件路径
-            method: 分割方法 ('size' 或 'chapter')
-            
-        Returns:
-            生成的文本块文件路径列表
-        """
-        if method is None:
-            method = self.split_method
-            
-        print(f"开始分割文本文件: {input_file}")
-        print(f"分割方法: {method}")
-        print(f"最大块大小: {self.max_chunk_chars} 字符")
-        print(f"缓冲区大小: {self.buffer_chars} 字符")
-        
-        # 读取文本
-        input_path = Path(input_file)
-        if not input_path.exists():
-            raise FileNotFoundError(f"找不到输入文件: {input_file}")
-            
-        encoding = self.config.get("input.encoding", "utf-8")
-        with open(input_path, 'r', encoding=encoding) as f:
-            text = f.read()
-        
-        print(f"原始文本长度: {len(text):,} 字符")
-        
-        # 根据方法分割
-        if method == "chapter":
-            chunks = self._split_by_chapters(text)
-        else:
-            chunks = self._split_by_size(text)
-        
-        # 保存文本块
-        chunk_files = self._save_chunks(chunks)
-        
-        print(f"分割完成！生成了 {len(chunk_files)} 个文本块")
-        print(f"平均块大小: {sum(len(chunk) for chunk in chunks) // len(chunks):,} 字符")
-        
-        # 保存映射信息
-        self._save_mapping(chunk_files, chunks)
-        
-        return chunk_files
+    def clean_text(self, text: str) -> str:
+        """清理文本，保持段落结构"""
+        # 移除版权信息和无关内容
+        lines = text.split('\n')
+        cleaned_lines = []
+
+        skip_patterns = [
+            r'┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓',
+            r'┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛',
+            r'精校小说尽在河洛网',
+            r'本电子书由.*整理校对',
+            r'版权归原作者所有',
+            r'请勿转载',
+            r'请勿用于.*商业用途'
+        ]
+
+        for line in lines:
+            # 保持空行，用于段落分隔
+            if not line.strip():
+                cleaned_lines.append('')
+                continue
+
+            line = line.strip()
+
+            # 跳过版权信息
+            skip = False
+            for pattern in skip_patterns:
+                if re.search(pattern, line):
+                    skip = True
+                    break
+
+            if not skip:
+                cleaned_lines.append(line)
+
+        # 重新连接，保持原有的换行结构
+        return '\n'.join(cleaned_lines)
     
-    def _split_by_size(self, text: str) -> List[str]:
+    def split_by_chapters(self, text: str) -> List[Tuple[str, str]]:
+        """按章节分割文本"""
+        chapters = []
+        
+        # 章节标题模式
+        chapter_pattern = r'^第\s*\d+\s*章\s+(.*)$'
+        
+        lines = text.split('\n')
+        current_title = "开头"
+        current_content = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 检查是否是章节标题
+            chapter_match = re.match(chapter_pattern, line)
+            if chapter_match:
+                # 保存前一章
+                if current_content:
+                    chapters.append((current_title, '\n'.join(current_content)))
+                
+                # 开始新章节
+                current_title = line
+                current_content = []
+            else:
+                current_content.append(line)
+        
+        # 保存最后一章
+        if current_content:
+            chapters.append((current_title, '\n'.join(current_content)))
+        
+        return chapters
+    
+    def split_by_size(self, text: str) -> List[str]:
         """按大小分割文本"""
         chunks = []
-        start = 0
         
-        while start < len(text):
-            # 计算当前块的结束位置
-            end = start + self.max_chunk_chars
+        # 按段落分割
+        paragraphs = text.split('\n\n')
+        
+        current_chunk = ""
+        
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
             
-            if end >= len(text):
-                # 最后一块
-                chunks.append(text[start:])
-                break
-            
-            # 寻找合适的分割点（避免在句子中间分割）
-            split_point = self._find_split_point(text, start, end)
-            
-            # 添加当前块
-            chunks.append(text[start:split_point])
-            
-            # 计算下一块的开始位置（包含缓冲区）
-            start = max(split_point - self.buffer_chars, start + 1)
+            # 如果添加这个段落会超过大小限制
+            if len(current_chunk) + len(paragraph) > self.chunk_size:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    
+                    # 添加重叠内容
+                    if self.overlap > 0:
+                        overlap_text = current_chunk[-self.overlap:]
+                        current_chunk = overlap_text + '\n\n' + paragraph
+                    else:
+                        current_chunk = paragraph
+                else:
+                    # 单个段落就超过大小限制，直接添加
+                    chunks.append(paragraph)
+                    current_chunk = ""
+            else:
+                if current_chunk:
+                    current_chunk += '\n\n' + paragraph
+                else:
+                    current_chunk = paragraph
+        
+        # 添加最后一个块
+        if current_chunk:
+            chunks.append(current_chunk)
         
         return chunks
     
-    def _split_by_chapters(self, text: str) -> List[str]:
-        """按章节分割文本"""
-        # 合并所有章节模式
-        pattern = '|'.join(f'({p})' for p in self.chapter_patterns)
+    def split_novel(self, input_file: str, method: str = "size"):
+        """分割小说文本"""
+        print("="*60)
+        print("文本分割器")
+        print("="*60)
         
-        # 查找所有章节标题
-        matches = list(re.finditer(pattern, text))
+        input_path = Path(input_file)
+        if not input_path.exists():
+            print(f"错误: 找不到输入文件 {input_file}")
+            return
         
-        if not matches:
-            print("警告: 未找到章节标题，使用按大小分割")
-            return self._split_by_size(text)
+        # 读取文本
+        print(f"读取文件: {input_file}")
+        try:
+            with open(input_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+        except Exception as e:
+            print(f"读取文件失败: {e}")
+            return
         
-        chunks = []
+        # 清理文本
+        print("清理文本...")
+        cleaned_text = self.clean_text(text)
+        print(f"原始长度: {len(text):,} 字符")
+        print(f"清理后长度: {len(cleaned_text):,} 字符")
         
-        for i, match in enumerate(matches):
-            start = match.start()
-            
-            # 确定章节结束位置
-            if i + 1 < len(matches):
-                end = matches[i + 1].start()
-            else:
-                end = len(text)
-            
-            chapter_text = text[start:end].strip()
-            
-            # 如果章节太长，进一步分割
-            if len(chapter_text) > self.max_chunk_chars:
-                sub_chunks = self._split_by_size(chapter_text)
-                chunks.extend(sub_chunks)
-            else:
-                chunks.append(chapter_text)
+        # 分割文本
+        print(f"分割方法: {method}")
         
-        return chunks
-    
-    def _find_split_point(self, text: str, start: int, end: int) -> int:
-        """寻找合适的分割点"""
-        # 优先在段落边界分割
-        for i in range(end - 1, start, -1):
-            if text[i] == '\n' and text[i-1] == '\n':
-                return i
-        
-        # 其次在句号、问号、感叹号后分割
-        for i in range(end - 1, start, -1):
-            if text[i] in '。！？':
-                return i + 1
-        
-        # 最后在逗号、分号后分割
-        for i in range(end - 1, start, -1):
-            if text[i] in '，；':
-                return i + 1
-        
-        # 如果找不到合适的分割点，就在指定位置分割
-        return end
-    
-    def _save_chunks(self, chunks: List[str]) -> List[str]:
-        """保存文本块到文件"""
-        chunk_files = []
-        
-        for i, chunk in enumerate(chunks, 1):
-            filename = f"chunk_{i:03d}.txt"
-            filepath = self.output_dir / filename
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(chunk)
-            
-            chunk_files.append(str(filepath))
-        
-        return chunk_files
-    
-    def _save_mapping(self, chunk_files: List[str], chunks: List[str]):
-        """保存文本块映射信息"""
-        mapping = {
-            "total_chunks": len(chunks),
-            "total_chars": sum(len(chunk) for chunk in chunks),
-            "avg_chunk_size": sum(len(chunk) for chunk in chunks) // len(chunks),
-            "chunks": [
+        if method == "chapter":
+            # 按章节分割
+            chapters = self.split_by_chapters(cleaned_text)
+            chunks = [content for _, content in chapters]
+            # 构建章节信息
+            chapter_info = [
                 {
-                    "file": Path(file).name,
-                    "size": len(chunk),
-                    "start_preview": chunk[:100] + "..." if len(chunk) > 100 else chunk
+                    "title": title,
+                    "number": i + 1
                 }
-                for file, chunk in zip(chunk_files, chunks)
+                for i, (title, _) in enumerate(chapters)
             ]
-        }
+            print(f"分割为 {len(chunks)} 个章节")
+        else:
+            # 按大小分割
+            chunks = self.split_by_size(cleaned_text)
+            chapter_info = None  # 按大小分割时没有章节信息
+            print(f"分割为 {len(chunks)} 个文本块")
+
+        # 保存文本块
+        self.save_chunks(chunks)
+
+        # 生成映射文件（包含时序元数据）
+        self.generate_mapping(chunks, method, chapter_info)
         
+        print(f"\n="*60)
+        print(f"文本分割完成！")
+        print(f"生成文本块: {len(chunks)} 个")
+        print(f"保存位置: {self.output_dir}")
+        print(f"平均长度: {sum(len(chunk) for chunk in chunks) // len(chunks):,} 字符")
+        print("="*60)
+    
+    def save_chunks(self, chunks: List[str]):
+        """保存文本块"""
+        # 清理输出目录
+        for old_file in self.output_dir.glob("chunk_*.txt"):
+            old_file.unlink()
+        
+        # 保存新的文本块
+        for i, chunk in enumerate(chunks, 1):
+            chunk_file = self.output_dir / f"chunk_{i:03d}.txt"
+            
+            try:
+                with open(chunk_file, 'w', encoding='utf-8') as f:
+                    f.write(chunk)
+                
+                print(f"保存: {chunk_file.name} ({len(chunk):,} 字符)")
+                
+            except Exception as e:
+                print(f"保存失败 {chunk_file}: {e}")
+    
+    def generate_mapping(self, chunks: List[str], method: str, chapter_info: Optional[List[dict]] = None):
+        """生成映射文件，包含时序元数据和章节信息"""
+        mapping = {
+            "method": method,
+            "chunk_size": self.chunk_size,
+            "overlap": self.overlap,
+            "total_chunks": len(chunks),
+            "generation_timestamp": json.dumps(datetime.now().isoformat()),
+            "chunks": []
+        }
+
+        for i, chunk in enumerate(chunks, 1):
+            chunk_info = {
+                "id": f"chunk_{i:03d}",
+                "order": i,  # 时序顺序
+                "length": len(chunk),
+                "preview": chunk[:100] + "..." if len(chunk) > 100 else chunk
+            }
+
+            # 添加章节信息（如果可用）
+            if chapter_info and i <= len(chapter_info):
+                chapter_data = chapter_info[i-1]
+                chunk_info.update({
+                    "chapter_title": chapter_data.get("title", f"第{i}部分"),
+                    "chapter_number": chapter_data.get("number", i),
+                    "estimated_timeline_position": self._estimate_timeline_position(i, len(chunks)),
+                    "narrative_context": self._analyze_narrative_context(chunk)
+                })
+            else:
+                # 默认章节信息
+                chunk_info.update({
+                    "chapter_title": f"第{i}部分",
+                    "chapter_number": i,
+                    "estimated_timeline_position": self._estimate_timeline_position(i, len(chunks)),
+                    "narrative_context": self._analyze_narrative_context(chunk)
+                })
+
+            mapping["chunks"].append(chunk_info)
+
+        # 保存映射文件
         mapping_file = self.output_dir / "mapping.json"
         with open(mapping_file, 'w', encoding='utf-8') as f:
             json.dump(mapping, f, ensure_ascii=False, indent=2)
-        
-        print(f"映射信息已保存到: {mapping_file}")
+
+        print(f"生成映射文件: {mapping_file}")
+        print(f"包含时序元数据: {len(chunks)} 个文本块")
+
+    def _estimate_timeline_position(self, chunk_index: int, total_chunks: int) -> str:
+        """估算文本块在故事时间线中的位置"""
+        progress = chunk_index / total_chunks
+
+        if progress <= 0.1:
+            return "故事开端"
+        elif progress <= 0.3:
+            return "情节发展"
+        elif progress <= 0.7:
+            return "故事高潮"
+        elif progress <= 0.9:
+            return "情节收束"
+        else:
+            return "故事结局"
+
+    def _analyze_narrative_context(self, chunk_text: str) -> dict:
+        """分析文本块的叙述上下文"""
+        context = {
+            "has_dialogue": bool(re.search(r'[""].*?[""]|「.*?」', chunk_text)),
+            "has_action": bool(re.search(r'(打|击|攻|战|斗|跑|飞|跳)', chunk_text)),
+            "has_description": bool(re.search(r'(美丽|壮观|巨大|微小|明亮|黑暗)', chunk_text)),
+            "emotional_tone": self._detect_emotional_tone(chunk_text),
+            "character_density": len(re.findall(r'[\u4e00-\u9fff]{2,4}(?=说|道|想|看|听)', chunk_text))
+        }
+        return context
+
+    def _detect_emotional_tone(self, text: str) -> str:
+        """检测文本的情感基调"""
+        positive_words = ['高兴', '快乐', '兴奋', '满意', '欣喜', '愉悦']
+        negative_words = ['愤怒', '悲伤', '恐惧', '绝望', '痛苦', '焦虑']
+        neutral_words = ['平静', '思考', '观察', '等待', '准备', '计划']
+
+        positive_count = sum(1 for word in positive_words if word in text)
+        negative_count = sum(1 for word in negative_words if word in text)
+        neutral_count = sum(1 for word in neutral_words if word in text)
+
+        if positive_count > negative_count and positive_count > neutral_count:
+            return "积极"
+        elif negative_count > positive_count and negative_count > neutral_count:
+            return "消极"
+        else:
+            return "中性"
+
+def main():
+    """主函数"""
+    import sys
     
-    def get_chunk_files(self) -> List[Path]:
-        """获取所有文本块文件"""
-        return sorted(self.output_dir.glob("chunk_*.txt"))
+    if len(sys.argv) < 2:
+        print("使用方法:")
+        print("  python text_splitter.py <输入文件> [分割方法]")
+        print("")
+        print("分割方法:")
+        print("  size    - 按大小分割 (默认)")
+        print("  chapter - 按章节分割")
+        print("")
+        print("示例:")
+        print("  python text_splitter.py novel.txt")
+        print("  python text_splitter.py novel.txt chapter")
+        return
     
-    def get_chunk_count(self) -> int:
-        """获取文本块数量"""
-        return len(self.get_chunk_files())
+    input_file = sys.argv[1]
+    method = sys.argv[2] if len(sys.argv) > 2 else "size"
     
-    def split_text(self):
-        """使用配置文件中的源文件进行分割"""
-        source_file = self.config.get("input.source_file", "a.txt")
-        return self.split_novel(source_file)
+    splitter = TextSplitter()
+    splitter.split_novel(input_file, method)
 
 if __name__ == "__main__":
-    # 测试文本分割器
-    splitter = TextSplitter()
-    
-    # 检查是否有输入文件
-    source_file = "a.txt"
-    if Path(source_file).exists():
-        chunk_files = splitter.split_novel(source_file)
-        print(f"\n生成的文本块文件:")
-        for file in chunk_files[:5]:  # 只显示前5个
-            print(f"  {file}")
-        if len(chunk_files) > 5:
-            print(f"  ... 还有 {len(chunk_files) - 5} 个文件")
-    else:
-        print(f"找不到输入文件: {source_file}")
-        print("请将小说文本文件命名为 a.txt 并放在当前目录")
+    main()

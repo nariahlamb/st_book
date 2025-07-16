@@ -1,1 +1,20 @@
-# st_book 项目依赖包\n\n# 核心依赖\nopenai>=1.0.0          # OpenAI API客户端\naiohttp>=3.8.0         # 异步HTTP客户端\naiofiles>=0.8.0        # 异步文件操作\n\n# 文本处理\nzhconv>=1.4.3          # 中文简繁转换\ndifflib                # 文本相似度计算（Python标准库）\n\n# 配置管理\npyyaml>=6.0            # YAML配置文件解析\n\n# 数据处理\nnumpy>=1.21.0          # 数值计算（可选，用于相似度计算优化）\n\n# 开发和测试依赖（可选）\npytest>=7.0.0          # 测试框架\npytest-asyncio>=0.21.0 # 异步测试支持\n\n# 注意：\n# - asyncio 和 pathlib 是Python标准库，无需安装\n# - json 是Python标准库，无需安装\n# - tkinter 是Python标准库（用于GUI，可选）
+# st_book 项目依赖包
+
+# 核心依赖
+openai>=1.0.0          # OpenAI API客户端
+asyncio                # 异步编程支持
+pathlib                # 路径处理
+json                   # JSON数据处理
+
+# 文本处理
+zhconv>=1.4.3          # 中文简繁转换
+difflib                # 文本相似度计算
+
+# 配置管理
+pyyaml>=6.0            # YAML配置文件解析
+
+# 可选依赖（用于GUI界面）
+tkinter                # GUI界面（Python标准库）
+
+# 开发和测试依赖
+pytest>=7.0.0          # 测试框架（可选）

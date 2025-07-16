@@ -210,8 +210,60 @@ def generate_worldbook():
     try:
         import asyncio
         from worldbook_generator import WorldbookGenerator
+        from project_config import get_config
+
         generator = WorldbookGenerator()
-        asyncio.run(generator.generate_worldbook())
+        config = get_config()
+
+        # 检查启用的架构模式
+        event_mode = config.get('event_driven_architecture.enable', True)
+        rules_mode = config.get('world_rules.enable_extraction', True)
+
+        if event_mode and rules_mode:
+            print("🏗️ 使用三层架构模式生成世界书（规则层+时间线层+事件层）...")
+            # 三层架构模式：需要实现完整的三层生成流程
+            try:
+                async def generate_layered():
+                    # 1. 加载规则数据
+                    rules = generator.load_and_sort_rules()
+                    if rules:
+                        grouped_rules = generator.aggregate_rules_by_type(rules)
+                        rule_summaries = await generator.summarize_rules(grouped_rules)
+                    else:
+                        rule_summaries = {}
+
+                    # 2. 加载事件数据并生成时间线和实体
+                    events = generator.load_and_sort_events()
+                    if events:
+                        timeline_content = await generator.summarize_timeline(events)
+                        aggregated_entities = generator.aggregate_entities_from_events(events)
+                        entity_summaries = await generator.summarize_entities(aggregated_entities)
+                        event_entries = generator.create_event_entries(events)
+                    else:
+                        timeline_content = "## 故事时间线\n\n*暂无事件数据*"
+                        entity_summaries = {}
+                        event_entries = []
+
+                    # 3. 生成三层世界书
+                    output_file = generator.save_layered_worldbook(
+                        rule_summaries, timeline_content, entity_summaries, event_entries
+                    )
+                    print(f"✅ 三层架构世界书生成完成: {output_file}")
+                    return output_file
+
+                asyncio.run(generate_layered())
+
+            except Exception as e:
+                print(f"❌ 三层架构模式失败，回退到事件驱动模式: {e}")
+                asyncio.run(generator.generate_timeline_worldbook())
+
+        elif event_mode:
+            print("🚀 使用事件驱动模式生成世界书...")
+            asyncio.run(generator.generate_timeline_worldbook())
+        else:
+            print("📚 使用传统模式生成世界书...")
+            asyncio.run(generator.generate_worldbook())
+
         print("结构化世界书生成完成！")
 
         # 自动转换为SillyTavern V2格式
