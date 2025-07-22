@@ -6,8 +6,8 @@ api:
 
 models:
   # 主要模型配置
-  extraction_model: gemini-2.5-flash # 用于快速、批量的信息提取
-  generation_model: gemini-2.5-pro # 用于最终的、需要深度创作的世界书章节生成
+  extraction_model: models/gemini-2.5-flash # 用于快速、批量的信息提取
+  generation_model: models/gemini-2.5-pro # 用于最终的、需要深度创作的世界书章节生成
 
   # 模型参数配置
   extraction_temperature: 0.3 # 角色/世界书信息提取时的温度
@@ -509,7 +509,7 @@ gui:
 
 # --- 文件转换配置 ---
 conversion:
-  worldbook_input_filename: "worldbook.json" # 世界书输入文件名
+  worldbook_input_filename: "layered_worldbook.json" # 世界书输入文件名
   worldbook_output_filename: "worldbook_st_v2.json" # 世界书输出文件名
   worldbook_conversion_dir: "worldbook" # 世界书转换目录
 
