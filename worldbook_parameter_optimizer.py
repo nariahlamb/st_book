@@ -13,6 +13,8 @@ SillyTavern世界书智能参数自动化赋值系统
 """
 
 import re
+import uuid
+import time
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from project_config import get_config
@@ -30,8 +32,8 @@ class WorldbookParameterOptimizer:
         if not self.enabled:
             print("⚠️ 世界书参数自动化已禁用，将使用默认参数")
     
-    def optimize_entry_parameters(self, entry: Dict[str, Any], entry_type: str = None,
-                                 content: str = None) -> Dict[str, Any]:
+    def optimize_entry_parameters(self, entry: Dict[str, Any], entry_type: Optional[str] = None,
+                                 content: Optional[str] = None) -> Dict[str, Any]:
         """
         为单个世界书条目优化参数
 
@@ -41,26 +43,34 @@ class WorldbookParameterOptimizer:
             content: 条目内容文本
 
         Returns:
-            优化后的参数字典
+            优化后的完整参数字典
         """
         if not self.enabled:
-            return self._get_default_parameters()
-
-        # 检查是否为事件驱动模式
-        event_mode = self.config.get('event_driven_architecture.enable', True)
-
-        if event_mode and 'significance' in entry:
-            # 事件驱动模式：基于significance评分优化
-            return self._optimize_event_parameters(entry, entry_type, content)
+            params = self._get_default_parameters()
         else:
-            # 传统模式：基于类型和内容优化
-            return self._optimize_traditional_parameters(entry, entry_type, content)
+            # 检查是否为事件驱动模式
+            event_mode = self.config.get('event_driven_architecture.enable', True)
 
-    def _optimize_event_parameters(self, entry: Dict[str, Any], entry_type: str = None,
-                                  content: str = None) -> Dict[str, Any]:
+            if event_mode and 'significance' in entry:
+                # 事件驱动模式：基于significance评分优化
+                params = self._optimize_event_parameters(entry, entry_type, content)
+            else:
+                # 传统模式：基于类型和内容优化
+                params = self._optimize_traditional_parameters(entry, entry_type, content)
+
+        # 添加必要的SillyTavern v2字段
+        params['uid'] = self._generate_uid()
+        params['displayIndex'] = self._generate_display_index()
+        params['extensions'] = self._generate_extensions(params)
+
+        return params
+
+    def _optimize_event_parameters(self, entry: Dict[str, Any], entry_type: Optional[str] = None,
+                                  content: Optional[str] = None) -> Dict[str, Any]:
         """基于事件重要性评分优化参数"""
         significance = entry.get('significance', 5)
         event_type = entry.get('event_type', '未分类')
+        content_str = content or entry.get('content', '')
 
         # 初始化参数
         params = self._get_default_parameters()
@@ -98,32 +108,31 @@ class WorldbookParameterOptimizer:
         params['comment'] = self._generate_event_comment(entry)
 
         # 8. 应用中文网文特殊优化
-        content = content or entry.get('content', '')
-        params = self._apply_chinese_webnovel_optimization(params, content, event_type)
+        params = self._apply_chinese_webnovel_optimization(params, content_str, event_type)
 
         return params
 
-    def _optimize_traditional_parameters(self, entry: Dict[str, Any], entry_type: str = None,
-                                       content: str = None) -> Dict[str, Any]:
+    def _optimize_traditional_parameters(self, entry: Dict[str, Any], entry_type: Optional[str] = None,
+                                       content: Optional[str] = None) -> Dict[str, Any]:
         """传统模式：基于类型和内容优化参数"""
-        # 提取基础信息
-        content = content or entry.get('content', '')
-        entry_type = entry_type or self._detect_entry_type(entry, content)
+        # 提取基础信息，确保不为None
+        content_str = content or entry.get('content', '')
+        entry_type = entry_type or self._detect_entry_type(entry, content_str)
 
         # 初始化参数
         params = self._get_base_parameters(entry_type)
 
         # 应用内容长度调整
-        params = self._apply_content_length_adjustments(params, content)
+        params = self._apply_content_length_adjustments(params, content_str)
 
         # 应用关键词密度分析
-        params = self._apply_keyword_density_analysis(params, content, entry)
+        params = self._apply_keyword_density_analysis(params, content_str, entry)
 
         # 应用中文网文特殊优化
-        params = self._apply_chinese_webnovel_optimization(params, content, entry_type)
+        params = self._apply_chinese_webnovel_optimization(params, content_str, entry_type)
 
         # 生成次要关键词
-        params['keysecondary'] = self._generate_secondary_keys(content, entry.get('key', []))
+        params['keysecondary'] = self._generate_secondary_keys(content_str, entry.get('key', []))
 
         # 生成comment总结
         params['comment'] = self._generate_comment(entry, entry_type)
@@ -151,11 +160,16 @@ class WorldbookParameterOptimizer:
         """从事件信息生成次要关键词"""
         secondary_keys = set()
 
-        # 从参与者提取
-        participants = entry.get('participants', {})
-        for participant_list in participants.values():
-            if isinstance(participant_list, list):
-                secondary_keys.update(participant_list)
+        # 从参与者提取（支持字典和列表两种格式）
+        participants = entry.get('participants', [])
+        if isinstance(participants, dict):
+            # 字典格式：{'主角': ['张三'], '反派': ['李四']}
+            for participant_list in participants.values():
+                if isinstance(participant_list, list):
+                    secondary_keys.update(participant_list)
+        elif isinstance(participants, list):
+            # 列表格式：['张三', '李四']
+            secondary_keys.update(participants)
 
         # 从地点提取
         location = entry.get('location', '')
@@ -183,9 +197,10 @@ class WorldbookParameterOptimizer:
         return f"【{event_type}】{event_summary} (重要性:{significance})"
 
     def _get_default_parameters(self) -> Dict[str, Any]:
-        """获取默认参数配置"""
+        """获取默认参数配置 - 完整的SillyTavern v2格式"""
         default_config = self.config.get('sillytavern_worldbook.default_entry', {})
         return {
+            # 基础字段
             'order': default_config.get('order', 100),
             'constant': False,
             'selective': True,
@@ -198,7 +213,34 @@ class WorldbookParameterOptimizer:
             'preventRecursion': False,
             'useProbability': True,
             'keysecondary': [],
-            'comment': ''
+            'comment': '',
+
+            # SillyTavern v2 标准字段
+            'vectorized': False,
+            'selectiveLogic': 0,
+            'delayUntilRecursion': False,
+            'group': '',
+            'groupOverride': False,
+            'groupWeight': 100,
+            'scanDepth': None,
+            'caseSensitive': None,
+            'matchWholeWords': None,
+            'useGroupScoring': False,
+            'automationId': '',
+            'role': None,
+
+            # 时间效果字段
+            'sticky': 0,
+            'cooldown': 0,
+            'delay': 0,
+
+            # 匹配控制字段
+            'matchPersonaDescription': False,
+            'matchCharacterDescription': False,
+            'matchCharacterPersonality': False,
+            'matchCharacterDepthPrompt': False,
+            'matchScenario': False,
+            'matchCreatorNotes': False
         }
     
     def _get_base_parameters(self, entry_type: str) -> Dict[str, Any]:
@@ -278,7 +320,7 @@ class WorldbookParameterOptimizer:
         
         return params
     
-    def _apply_keyword_density_analysis(self, params: Dict[str, Any], content: str, 
+    def _apply_keyword_density_analysis(self, params: Dict[str, Any], content: str,
                                       entry: Dict[str, Any]) -> Dict[str, Any]:
         """应用关键词密度分析"""
         if not self.automation_config.get('keyword_density_analysis.enable', True):
@@ -343,17 +385,59 @@ class WorldbookParameterOptimizer:
     
     def _generate_comment(self, entry: Dict[str, Any], entry_type: str) -> str:
         """生成条目注释"""
+        # 如果条目已经有comment字段，优先使用
+        if 'comment' in entry and entry['comment']:
+            return entry['comment']
+
+        # 根据条目类型生成不同的前缀
+        prefix = self._get_type_prefix(entry_type)
+
         name = entry.get('name', '')
         if name:
-            return f"【{entry_type}】{name}"
-        
+            return f"{prefix}{name}"
+
         primary_keys = entry.get('key', [])
         if primary_keys:
-            return f"【{entry_type}】{primary_keys[0]}"
-        
-        return f"【{entry_type}】未命名条目"
+            return f"{prefix}{primary_keys[0]}"
+
+        return f"{prefix}未命名条目"
+
+    def _get_type_prefix(self, entry_type: str) -> str:
+        """根据条目类型获取前缀"""
+        type_prefixes = {
+            "世界规则": "【世界规则】",
+            "时间线总览": "【故事总览】",
+            "核心实体": "【核心实体】",
+            "事件": "【事件】",
+            "地点": "【地点】",
+            "物品": "【物品】",
+            "势力": "【势力】",
+            "种族": "【种族】",
+            "技能": "【技能】",
+            "系统": "【系统】"
+        }
+
+        return type_prefixes.get(entry_type, f"【{entry_type}】")
     
     def _check_addmemo_content(self, content: str) -> bool:
         """检查内容是否包含指令性关键词"""
         addmemo_keywords = self.automation_config.get('addmemo_keywords', [])
         return any(keyword in content for keyword in addmemo_keywords)
+
+    def _generate_uid(self) -> str:
+        """生成唯一标识符"""
+        return str(uuid.uuid4())
+
+    def _generate_display_index(self) -> int:
+        """生成显示索引"""
+        return int(time.time() * 1000)  # 使用时间戳确保唯一性
+
+    def _generate_extensions(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """生成扩展配置对象"""
+        return {
+            "position": params.get('position', 0),
+            "exclude_recursion": params.get('excludeRecursion', False),
+            "display_index": self._generate_display_index(),
+            "world_info_before_char": params.get('position', 0) == 0,
+            "world_info_after_char": params.get('position', 0) == 1
+        }

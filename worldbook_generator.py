@@ -48,6 +48,350 @@ class WorldbookGenerator:
             timeout=self.timeout
         )
 
+    def _clean_ai_preamble(self, content: str) -> str:
+        """清理AI生成内容中的开场白和元评论"""
+        import re
+
+        # 定义需要清理的开场白模式
+        preamble_patterns = [
+            r'^好的，作为.*?，我将.*?[。：]\s*',
+            r'^作为.*?，我将.*?[。：]\s*',
+            r'^根据您的要求.*?[。：]\s*',
+            r'^我将为您.*?[。：]\s*',
+            r'^以下是.*?[。：]\s*',
+            r'^让我.*?[。：]\s*',
+            r'^现在我.*?[。：]\s*',
+            r'^我来.*?[。：]\s*',
+            r'^我会.*?[。：]\s*',
+            r'^接下来.*?[。：]\s*'
+        ]
+
+        cleaned_content = content
+
+        # 逐个应用清理模式
+        for pattern in preamble_patterns:
+            cleaned_content = re.sub(pattern, '', cleaned_content, flags=re.MULTILINE | re.DOTALL)
+
+        # 清理开头的空行
+        cleaned_content = cleaned_content.lstrip('\n\r ')
+
+        return cleaned_content
+
+    def load_classified_rules(self) -> Dict[str, List[Dict[str, Any]]]:
+        """加载分类后的规则数据"""
+        classified_file = self.input_dir / "classified" / "classified_rules.json"
+        if not classified_file.exists():
+            print(f"⚠️ 未找到分类规则文件: {classified_file}")
+            return {}
+
+        try:
+            with open(classified_file, 'r', encoding='utf-8') as f:
+                classified_rules = json.load(f)
+            print(f"📊 成功加载分类规则: {len(classified_rules)} 种类型")
+            return classified_rules
+        except Exception as e:
+            print(f"❌ 加载分类规则失败: {e}")
+            return {}
+
+    def load_classified_events(self) -> Dict[str, List[Dict[str, Any]]]:
+        """加载分类后的事件数据"""
+        classified_file = self.input_dir / "classified" / "classified_events.json"
+        if not classified_file.exists():
+            print(f"⚠️ 未找到分类事件文件: {classified_file}")
+            return {}
+
+        try:
+            with open(classified_file, 'r', encoding='utf-8') as f:
+                classified_events = json.load(f)
+            print(f"📊 成功加载分类事件: {len(classified_events)} 种类型")
+            return classified_events
+        except Exception as e:
+            print(f"❌ 加载分类事件失败: {e}")
+            return {}
+
+    def load_classified_entities(self) -> Dict[str, Dict[str, Any]]:
+        """加载分类后的实体数据"""
+        classified_file = self.input_dir / "classified" / "classified_entities.json"
+        if not classified_file.exists():
+            print(f"⚠️ 未找到分类实体文件: {classified_file}")
+            return {}
+
+        try:
+            with open(classified_file, 'r', encoding='utf-8') as f:
+                classified_entities = json.load(f)
+            print(f"📊 成功加载分类实体: {len(classified_entities)} 个实体")
+            return classified_entities
+        except Exception as e:
+            print(f"❌ 加载分类实体失败: {e}")
+            return {}
+
+    async def summarize_classified_rules(self, classified_rules: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+        """处理分类后的规则数据，生成规则总结"""
+        rule_summaries = {}
+
+        print(f"🔄 开始处理 {len(classified_rules)} 种规则类型...")
+
+        for rule_type, rules in classified_rules.items():
+            print(f"📋 正在整合规则类型: {rule_type} ({len(rules)} 个规则)")
+
+            # 提取规则描述
+            rule_descriptions = []
+            for rule in rules:
+                if isinstance(rule, dict):
+                    # 检查多个可能的描述字段
+                    desc = ""
+                    for field in ["description", "rule_description", "rule_summary"]:
+                        if field in rule and rule[field]:
+                            desc = rule[field]
+                            break
+
+                    if desc:
+                        # 添加规则标题和描述
+                        rule_title = rule.get("rule_summary", "未知规则")
+                        rule_descriptions.append(f"- **{rule_title}**: {desc}")
+
+            if not rule_descriptions:
+                print(f"⚠️ 规则类型 {rule_type} 没有有效的描述，跳过")
+                continue
+
+            # 构建整合Prompt
+            rules_prompt = f"""
+请将以下关于"{rule_type}"的分散规则整合为一个完整、系统性的设定描述。
+
+**要求：**
+1. 整合所有相关规则为连贯的系统描述
+2. 保持逻辑一致性，消除矛盾
+3. 突出核心机制和重要限制
+4. 使用Markdown格式，结构清晰
+5. 为AI角色扮演提供明确的逻辑基础
+6. **直接输出设定内容，不要任何开场白、解释或元评论**
+
+**规则列表：**
+{chr(10).join(rule_descriptions[:10])}  # 限制长度避免token超限
+
+请直接生成{rule_type}设定内容：
+"""
+
+            # 添加重试机制
+            for attempt in range(self.retry_limit):
+                try:
+                    messages = [
+                        {"role": "system", "content": "你是一个专业的世界观设计师，擅长整合分散的设定规则为连贯的体系。"},
+                        {"role": "user", "content": rules_prompt}
+                    ]
+
+                    response = await self.client.chat.completions.create(
+                        model=self.pro_model,
+                        messages=messages,
+                        temperature=self.generation_temperature,
+                        max_tokens=self.max_tokens,
+                        timeout=self.timeout
+                    )
+
+                    content = response.choices[0].message.content
+                    if not content or content.strip() == "":
+                        raise ValueError("API返回空内容")
+
+                    # 清理AI开场白
+                    cleaned_content = self._clean_ai_preamble(content.strip())
+                    rule_summaries[rule_type] = cleaned_content
+                    print(f"✅ 完成规则整合: {rule_type}")
+                    break  # 成功后跳出重试循环
+
+                except Exception as e:
+                    print(f"⚠️ 规则类型 {rule_type} 整合失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                    if attempt < self.retry_limit - 1:
+                        # 根据错误类型调整等待时间
+                        if "rate limit" in str(e).lower() or "429" in str(e):
+                            wait_time = self.retry_delay * (attempt + 1) * 2  # 限流时加倍等待
+                            print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                        else:
+                            wait_time = self.retry_delay
+                            print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                        await asyncio.sleep(wait_time)
+                    else:
+                        # 所有重试都失败，生成fallback描述
+                        print(f"❌ 规则类型 {rule_type} 在达到最大重试次数后仍然失败")
+                        rule_summaries[rule_type] = f"## {rule_type}\n\n*整合失败，包含{len(rules)}个相关规则*\n\n**原始规则列表：**\n" + "\n".join(rule_descriptions[:5])
+
+            # 处理下一个规则类型
+
+        return rule_summaries
+
+    async def summarize_timeline_from_classified(self, classified_events: Dict[str, List[Dict[str, Any]]]) -> str:
+        """从分类后的事件数据生成时间线总览"""
+        # 收集所有事件
+        all_events = []
+        for event_type, events in classified_events.items():
+            all_events.extend(events)
+
+        # 如果没有事件，返回默认内容
+        if not all_events:
+            return "## 故事时间线\n\n*暂无事件数据*"
+
+        # 按时间顺序排序事件
+        sorted_events = sorted(all_events, key=lambda e: e.get("chunk_order", 0))
+
+        # 提取事件摘要
+        timeline_summaries = []
+        for event in sorted_events:
+            if isinstance(event, dict):
+                summary = event.get("event_summary", "")
+                if summary:
+                    timeline_summaries.append(f"- {summary}")
+
+        # 构建时间线Prompt
+        timeline_prompt = f"""
+请根据以下关键事件列表，生成一个完整的故事时间线总览。
+
+**要求：**
+1. 按时间顺序梳理主要情节发展
+2. 突出关键转折点和重要事件
+3. 保持叙述的连贯性和逻辑性
+4. 使用Markdown格式，包含适当的标题和结构
+5. **直接输出时间线内容，不要任何开场白、解释或元评论**
+
+**关键事件列表：**
+{chr(10).join(timeline_summaries[:20])}  # 限制长度避免token超限
+
+请直接生成故事时间线总览内容：
+"""
+
+        # 添加重试机制
+        for attempt in range(self.retry_limit):
+            try:
+                messages = [
+                    {"role": "system", "content": "你是一个专业的故事分析师，擅长梳理复杂情节的时间线。"},
+                    {"role": "user", "content": timeline_prompt}
+                ]
+
+                response = await self.client.chat.completions.create(
+                    model=self.pro_model,
+                    messages=messages,
+                    temperature=self.generation_temperature,
+                    max_tokens=self.max_tokens,
+                    timeout=self.timeout
+                )
+
+                content = response.choices[0].message.content
+                if not content or content.strip() == "":
+                    raise ValueError("API返回空内容")
+
+                # 清理AI开场白
+                cleaned_content = self._clean_ai_preamble(content.strip())
+                print("✅ 时间线总览生成成功")
+                return cleaned_content
+
+            except Exception as e:
+                print(f"⚠️ 时间线生成失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                if attempt < self.retry_limit - 1:
+                    # 根据错误类型调整等待时间
+                    if "rate limit" in str(e).lower() or "429" in str(e):
+                        wait_time = self.retry_delay * (attempt + 1) * 2
+                        print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                    else:
+                        wait_time = self.retry_delay
+                        print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                    await asyncio.sleep(wait_time)
+                else:
+                    # 所有重试都失败，返回fallback
+                    print(f"❌ 时间线生成在达到最大重试次数后仍然失败")
+                    return f"## 故事时间线\n\n*生成失败，包含{len(all_events)}个事件*\n\n**重要事件摘要：**\n" + "\n".join(timeline_summaries[:10])
+
+    async def summarize_classified_entities(self, classified_entities: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+        """处理分类后的实体数据，生成实体总结"""
+        entity_summaries = {}
+
+        print(f"🔄 开始处理 {len(classified_entities)} 个实体...")
+
+        for entity_name, entity_data in classified_entities.items():
+            print(f"👥 正在生成实体总结: {entity_name}")
+
+            # 提取事件摘要
+            event_summaries = []
+            for event in entity_data.get("events", []):
+                if isinstance(event, dict):
+                    summary = event.get("event_summary", "")
+                    if summary:
+                        event_summaries.append(f"- {summary}")
+
+            if not event_summaries:
+                print(f"⚠️ 实体 {entity_name} 没有相关事件，跳过")
+                continue
+
+            # 构建实体总结Prompt
+            entity_prompt = f"""
+请根据以下事件信息，为角色/实体"{entity_name}"生成一份详细的总结。
+
+**实体信息：**
+- 参与事件数量：{entity_data.get('event_count', 0)}
+- 平均重要性：{entity_data.get('average_significance', 0):.1f}
+- 活动地点：{', '.join(entity_data.get('locations', [])[:5])}
+- 相关物品：{', '.join(entity_data.get('items', [])[:5])}
+
+**参与的关键事件：**
+{chr(10).join(event_summaries[:10])}
+
+**要求：**
+1. 生成一份完整的角色/实体档案
+2. 描述其在故事中的作用和发展轨迹
+3. 突出其重要性和影响力
+4. 使用Markdown格式，结构清晰
+5. **直接输出实体档案内容，不要任何开场白、解释或元评论**
+
+请直接生成{entity_name}的实体档案内容：
+"""
+
+            # 添加重试机制
+            for attempt in range(self.retry_limit):
+                try:
+                    messages = [
+                        {"role": "system", "content": "你是一个专业的角色分析师，擅长从事件中提炼角色特征和发展轨迹。"},
+                        {"role": "user", "content": entity_prompt}
+                    ]
+
+                    response = await self.client.chat.completions.create(
+                        model=self.pro_model,
+                        messages=messages,
+                        temperature=self.generation_temperature,
+                        max_tokens=self.max_tokens,
+                        timeout=self.timeout
+                    )
+
+                    content = response.choices[0].message.content
+                    if not content or content.strip() == "":
+                        raise ValueError("API返回空内容")
+
+                    # 清理AI开场白
+                    cleaned_content = self._clean_ai_preamble(content.strip())
+                    entity_summaries[entity_name] = cleaned_content
+                    print(f"✅ 完成实体总结: {entity_name}")
+                    break  # 成功后跳出重试循环
+
+                except Exception as e:
+                    print(f"⚠️ 实体 {entity_name} 总结生成失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                    if attempt < self.retry_limit - 1:
+                        # 根据错误类型调整等待时间
+                        if "rate limit" in str(e).lower() or "429" in str(e):
+                            wait_time = self.retry_delay * (attempt + 1) * 2
+                            print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                        else:
+                            wait_time = self.retry_delay
+                            print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                        await asyncio.sleep(wait_time)
+                    else:
+                        # 所有重试都失败，生成fallback描述
+                        print(f"❌ 实体 {entity_name} 在达到最大重试次数后仍然失败")
+                        entity_summaries[entity_name] = f"## {entity_name}\n\n*总结生成失败*\n\n**基础信息：**\n- 参与事件：{entity_data.get('event_count', 0)}个\n- 平均重要性：{entity_data.get('average_significance', 0):.1f}\n- 活动地点：{', '.join(entity_data.get('locations', [])[:3])}"
+
+        return entity_summaries
+
         # [核心优化] 将Prompt作为可配置的类属性，结构更清晰
         self.worldbook_prompt_template = self.config.get("worldbook.generation_prompt", """
 <role>
@@ -393,7 +737,8 @@ class WorldbookGenerator:
             print(f"📂 按顺序处理 {len(sorted_chunk_ids)} 个文本块...")
 
             for chunk_id in sorted_chunk_ids:
-                file = self.input_dir / f"{chunk_id}.json"
+                # 事件文件在events子目录中
+                file = self.input_dir / "events" / f"{chunk_id}.json"
                 if file.exists():
                     try:
                         with open(file, 'r', encoding='utf-8') as f:
@@ -543,11 +888,12 @@ class WorldbookGenerator:
 3. 突出核心机制和重要限制
 4. 使用Markdown格式，结构清晰
 5. 为AI角色扮演提供明确的逻辑基础
+6. **直接输出设定内容，不要任何开场白、解释或元评论**
 
 **规则列表：**
 {chr(10).join(rule_descriptions[:10])}  # 限制长度避免token超限
 
-请生成完整的{rule_type}设定：
+请直接生成{rule_type}设定内容：
 """
 
                 messages = [
@@ -555,20 +901,49 @@ class WorldbookGenerator:
                     {"role": "user", "content": rules_prompt}
                 ]
 
-                response = await self.client.chat.completions.create(
-                    model=self.pro_model,
-                    messages=messages,
-                    temperature=self.generation_temperature,
-                    max_tokens=self.max_tokens
-                )
+                # 添加重试机制
+                for attempt in range(self.retry_limit):
+                    try:
+                        response = await self.client.chat.completions.create(
+                            model=self.pro_model,
+                            messages=messages,
+                            temperature=self.generation_temperature,
+                            max_tokens=self.max_tokens,
+                            timeout=self.timeout
+                        )
 
-                rule_summaries[rule_type] = response.choices[0].message.content.strip()
-                print(f"✅ 完成规则整合: {rule_type}")
+                        content = response.choices[0].message.content
+                        if not content or content.strip() == "":
+                            raise ValueError("API返回空内容")
+
+                        # 清理AI开场白
+                        cleaned_content = self._clean_ai_preamble(content.strip())
+                        rule_summaries[rule_type] = cleaned_content
+                        print(f"✅ 完成规则整合: {rule_type}")
+                        break  # 成功后跳出重试循环
+
+                    except Exception as e:
+                        print(f"⚠️ 规则类型 {rule_type} 整合失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                        if attempt < self.retry_limit - 1:
+                            # 根据错误类型调整等待时间
+                            if "rate limit" in str(e).lower() or "429" in str(e):
+                                wait_time = self.retry_delay * (attempt + 1) * 2  # 限流时加倍等待
+                                print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                            else:
+                                wait_time = self.retry_delay
+                                print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # 所有重试都失败，生成fallback描述
+                            print(f"❌ 规则类型 {rule_type} 在达到最大重试次数后仍然失败")
+                            rule_summaries[rule_type] = f"## {rule_type}\n\n*整合失败，包含{len(rules)}个相关规则*\n\n**原始规则列表：**\n" + "\n".join(rule_descriptions[:5])
 
             except Exception as e:
-                print(f"⚠️ 规则类型 {rule_type} 整合失败: {e}")
-                # 生成简单的fallback描述
-                rule_summaries[rule_type] = f"## {rule_type}\n\n*整合失败，包含{len(rules)}个相关规则*"
+                print(f"❌ 规则类型 {rule_type} 处理出现意外错误: {e}")
+                # 生成包含更多信息的fallback描述
+                rule_summaries[rule_type] = f"## {rule_type}\n\n*处理失败，包含{len(rules)}个相关规则*\n\n**原始规则列表：**\n" + "\n".join(rule_descriptions[:5])
 
         return rule_summaries
 
@@ -610,6 +985,7 @@ class WorldbookGenerator:
                 "keysecondary": [],
                 "comment": f"{rules_config.get('comment_prefix', '【世界规则】')}{rule_type}",
                 "content": rule_content,
+                "type": "世界规则",  # 添加正确的type字段
                 "constant": rules_config.get('constant', True),
                 "selective": False,
                 "order": rules_order_start + i,
@@ -644,6 +1020,7 @@ class WorldbookGenerator:
             "keysecondary": ["年表", "大事记", "情节发展"],
             "comment": timeline_config.get('comment', '【故事总览】时间线'),
             "content": timeline_content,
+            "type": "时间线总览",  # 添加正确的type字段
             "constant": timeline_config.get('constant', True),
             "selective": False,
             "order": timeline_order,
@@ -679,6 +1056,7 @@ class WorldbookGenerator:
                 "keysecondary": [],
                 "comment": f"{entity_config.get('comment_prefix', '【核心实体】')}{entity_name}",
                 "content": entity_content,
+                "type": "核心实体",  # 添加正确的type字段
                 "constant": entity_config.get('constant', True),
                 "selective": False,
                 "order": entity_order_start + i,
@@ -790,32 +1168,56 @@ class WorldbookGenerator:
 2. 突出关键转折点和重要事件
 3. 保持叙述的连贯性和逻辑性
 4. 使用Markdown格式，包含适当的标题和结构
+5. **直接输出时间线内容，不要任何开场白、解释或元评论**
 
 **关键事件列表：**
 {chr(10).join(timeline_summaries[:20])}  # 限制长度避免token超限
 
-请生成故事时间线总览：
+请直接生成故事时间线总览内容：
 """
 
-        try:
-            messages = [
-                {"role": "system", "content": "你是一个专业的故事分析师，擅长梳理复杂情节的时间线。"},
-                {"role": "user", "content": timeline_prompt}
-            ]
+        messages = [
+            {"role": "system", "content": "你是一个专业的故事分析师，擅长梳理复杂情节的时间线。"},
+            {"role": "user", "content": timeline_prompt}
+        ]
 
-            response = await self.client.chat.completions.create(
-                model=self.pro_model,
-                messages=messages,
-                temperature=self.generation_temperature,
-                max_tokens=self.max_tokens,
-                timeout=self.timeout
-            )
+        # 添加重试机制
+        for attempt in range(self.retry_limit):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.pro_model,
+                    messages=messages,
+                    temperature=self.generation_temperature,
+                    max_tokens=self.max_tokens,
+                    timeout=self.timeout
+                )
 
-            return response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                if not content or content.strip() == "":
+                    raise ValueError("API返回空内容")
 
-        except Exception as e:
-            print(f"⚠️ 时间线生成失败: {e}")
-            return f"## 故事时间线\n\n*生成失败，包含{len(events)}个事件*"
+                # 清理AI开场白
+                cleaned_content = self._clean_ai_preamble(content.strip())
+                print("✅ 时间线总览生成成功")
+                return cleaned_content
+
+            except Exception as e:
+                print(f"⚠️ 时间线生成失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                if attempt < self.retry_limit - 1:
+                    # 根据错误类型调整等待时间
+                    if "rate limit" in str(e).lower() or "429" in str(e):
+                        wait_time = self.retry_delay * (attempt + 1) * 2
+                        print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                    else:
+                        wait_time = self.retry_delay
+                        print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                    await asyncio.sleep(wait_time)
+                else:
+                    # 所有重试都失败，返回fallback
+                    print(f"❌ 时间线生成在达到最大重试次数后仍然失败")
+                    return f"## 故事时间线\n\n*生成失败，包含{len(events)}个事件*\n\n**重要事件摘要：**\n" + "\n".join([f"- {event.get('event_summary', '未知事件')}" for event in events[:10]])
 
     def aggregate_entities_from_events(self, events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """从事件中聚合实体信息"""
@@ -899,8 +1301,9 @@ class WorldbookGenerator:
 2. 描述其在故事中的作用和发展轨迹
 3. 突出其重要性和影响力
 4. 使用Markdown格式，结构清晰
+5. **直接输出实体档案内容，不要任何开场白、解释或元评论**
 
-请生成实体总结：
+请直接生成{entity_name}的实体档案内容：
 """
 
                 messages = [
@@ -908,20 +1311,48 @@ class WorldbookGenerator:
                     {"role": "user", "content": entity_prompt}
                 ]
 
-                response = await self.client.chat.completions.create(
-                    model=self.pro_model,
-                    messages=messages,
-                    temperature=self.generation_temperature,
-                    max_tokens=self.max_tokens,
-                    timeout=self.timeout
-                )
+                # 添加重试机制
+                for attempt in range(self.retry_limit):
+                    try:
+                        response = await self.client.chat.completions.create(
+                            model=self.pro_model,
+                            messages=messages,
+                            temperature=self.generation_temperature,
+                            max_tokens=self.max_tokens,
+                            timeout=self.timeout
+                        )
 
-                entity_summaries[entity_name] = response.choices[0].message.content.strip()
-                print(f"✅ 完成实体总结: {entity_name}")
+                        content = response.choices[0].message.content
+                        if not content or content.strip() == "":
+                            raise ValueError("API返回空内容")
+
+                        # 清理AI开场白
+                        cleaned_content = self._clean_ai_preamble(content.strip())
+                        entity_summaries[entity_name] = cleaned_content
+                        print(f"✅ 完成实体总结: {entity_name}")
+                        break  # 成功后跳出重试循环
+
+                    except Exception as e:
+                        print(f"⚠️ 实体 {entity_name} 总结生成失败 (尝试 {attempt + 1}/{self.retry_limit}): {e}")
+
+                        if attempt < self.retry_limit - 1:
+                            # 根据错误类型调整等待时间
+                            if "rate limit" in str(e).lower() or "429" in str(e):
+                                wait_time = self.retry_delay * (attempt + 1) * 2
+                                print(f"🔄 检测到限流，等待 {wait_time} 秒后重试...")
+                            else:
+                                wait_time = self.retry_delay
+                                print(f"🔄 等待 {wait_time} 秒后重试...")
+
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # 所有重试都失败，生成fallback描述
+                            print(f"❌ 实体 {entity_name} 在达到最大重试次数后仍然失败")
+                            entity_summaries[entity_name] = f"## {entity_name}\n\n*总结生成失败*\n\n**基础信息：**\n- 参与事件：{entity_data['event_count']}个\n- 平均重要性：{entity_data['average_significance']:.1f}\n- 活动地点：{', '.join(entity_data['locations'][:3])}"
 
             except Exception as e:
-                print(f"⚠️ 实体 {entity_name} 总结生成失败: {e}")
-                entity_summaries[entity_name] = f"## {entity_name}\n\n*总结生成失败*"
+                print(f"❌ 实体 {entity_name} 处理出现意外错误: {e}")
+                entity_summaries[entity_name] = f"## {entity_name}\n\n*处理失败*"
 
         return entity_summaries
 

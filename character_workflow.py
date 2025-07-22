@@ -204,9 +204,37 @@ def extract_worldbook():
         print(f"世界书条目提取失败: {e}")
         return False
 
+def classify_worldbook():
+    """分类世界书数据"""
+    print("开始分类世界书数据...")
+    try:
+        from worldbook_classifier import WorldbookClassifier
+        classifier = WorldbookClassifier()
+        success = classifier.classify_all()
+
+        if success:
+            print("✅ 世界书数据分类完成")
+            return True
+        else:
+            print("❌ 世界书数据分类失败")
+            return False
+    except Exception as e:
+        print(f"❌ 世界书数据分类过程出错: {e}")
+        return False
+
 def generate_worldbook():
     """生成结构化世界书"""
     print("开始生成结构化世界书...")
+
+    # 确保先完成分类
+    from pathlib import Path
+    classified_dir = Path("wb_responses/classified")
+    if not classified_dir.exists() or not any(classified_dir.glob("classified_*.json")):
+        print("⚠️ 未找到分类数据，先执行分类步骤...")
+        if not classify_worldbook():
+            print("❌ 分类步骤失败，无法继续生成")
+            return False
+
     try:
         import asyncio
         from worldbook_generator import WorldbookGenerator
@@ -224,29 +252,30 @@ def generate_worldbook():
             # 三层架构模式：需要实现完整的三层生成流程
             try:
                 async def generate_layered():
-                    # 1. 加载规则数据
-                    rules = generator.load_and_sort_rules()
-                    if rules:
-                        grouped_rules = generator.aggregate_rules_by_type(rules)
-                        rule_summaries = await generator.summarize_rules(grouped_rules)
+                    # 1. 加载分类后的规则数据
+                    classified_rules = generator.load_classified_rules()
+                    if classified_rules:
+                        rule_summaries = await generator.summarize_classified_rules(classified_rules)
                     else:
                         rule_summaries = {}
 
-                    # 2. 加载事件数据并生成时间线和实体
-                    events = generator.load_and_sort_events()
-                    if events:
-                        timeline_content = await generator.summarize_timeline(events)
-                        aggregated_entities = generator.aggregate_entities_from_events(events)
-                        entity_summaries = await generator.summarize_entities(aggregated_entities)
-                        event_entries = generator.create_event_entries(events)
+                    # 2. 加载分类后的事件数据并生成时间线
+                    classified_events = generator.load_classified_events()
+                    if classified_events:
+                        timeline_content = await generator.summarize_timeline_from_classified(classified_events)
                     else:
                         timeline_content = "## 故事时间线\n\n*暂无事件数据*"
-                        entity_summaries = {}
-                        event_entries = []
 
-                    # 3. 生成三层世界书
+                    # 3. 加载分类后的实体数据
+                    classified_entities = generator.load_classified_entities()
+                    if classified_entities:
+                        entity_summaries = await generator.summarize_classified_entities(classified_entities)
+                    else:
+                        entity_summaries = {}
+
+                    # 4. 生成三层世界书
                     output_file = generator.save_layered_worldbook(
-                        rule_summaries, timeline_content, entity_summaries, event_entries
+                        rule_summaries, timeline_content, entity_summaries, []  # 暂时不处理事件条目
                     )
                     print(f"✅ 三层架构世界书生成完成: {output_file}")
                     return output_file
@@ -281,9 +310,48 @@ def generate_worldbook():
 def convert_worldbook_format():
     """转换世界书为SillyTavern V2格式"""
     try:
+        from pathlib import Path
         from code import WorldbookFormatter
+
+        worldbook_dir = Path("worldbook")
+
+        # 检查可能的输入文件
+        possible_files = [
+            "layered_worldbook.json",  # 三层架构模式
+            "timeline_worldbook.json",  # 事件驱动模式
+            "worldbook.json"  # 传统模式
+        ]
+
+        input_file = None
+        for filename in possible_files:
+            file_path = worldbook_dir / filename
+            if file_path.exists():
+                input_file = filename
+                print(f"找到世界书文件: {filename}")
+                break
+
+        if not input_file:
+            print("未找到任何世界书文件进行转换")
+            return False
+
+        # 临时复制文件为标准名称以供转换器使用
+        source_file = worldbook_dir / input_file
+        target_file = worldbook_dir / "worldbook.json"
+
+        if input_file != "worldbook.json":
+            import shutil
+            shutil.copy2(source_file, target_file)
+            print(f"临时复制 {input_file} 为 worldbook.json")
+
+        # 执行转换
         formatter = WorldbookFormatter("worldbook")
         formatter.convert()
+
+        # 清理临时文件
+        if input_file != "worldbook.json" and target_file.exists():
+            target_file.unlink()
+            print("清理临时文件")
+
         return True
     except Exception as e:
         print(f"世界书格式转换失败: {e}")
@@ -528,6 +596,10 @@ def main():
     elif command == "wb-extract":
         # 提取世界书
         extract_worldbook()
+
+    elif command == "wb-classify":
+        # 分类世界书数据
+        classify_worldbook()
 
     elif command == "wb-generate":
         # 生成世界书
